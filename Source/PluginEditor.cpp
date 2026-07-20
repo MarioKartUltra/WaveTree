@@ -322,7 +322,7 @@ PresetBar::PresetBar (WaveTreeProcessor* p) : proc (p)
     addAndMakeVisible (box);
     addAndMakeVisible (saveBtn);
     box.setTextWhenNothingSelected ("presets...");
-    box.setTooltip ("Factory + user presets (user presets live in ~/Music/WaveTree II/Presets).");
+    box.setTooltip ("Factory + user presets.");
     saveBtn.setTooltip ("Save the current sound (all parameters + tree edits) as a named user preset.");
     refresh();
     box.onChange = [this]

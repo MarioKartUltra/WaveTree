@@ -14,6 +14,7 @@
 // =============================================================================
 #pragma once
 
+#include <cassert>
 #include <vector>
 #include "Wavelets.h"
 
@@ -24,6 +25,13 @@ class Dwt
 public:
     void configure(const Wavelet& wav, int frameSize, int levels)
     {
+        // Audio-thread safety: after prepare() warms capacity (first call), a
+        // reconfigure must never grow the buffers (no realloc on the audio thread).
+        assert (tmp.capacity() == 0
+                || (tmp.capacity() >= (size_t) frameSize
+                    && scratch.capacity() >= (size_t) frameSize
+                    && bandOffset.capacity() >= (size_t) (levels + 1)
+                    && bandLen.capacity()    >= (size_t) (levels + 1)));
         w = wav;
         N = frameSize;
         L = levels;
