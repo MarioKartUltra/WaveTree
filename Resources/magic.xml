@@ -14,9 +14,9 @@
                 caption-size="13" caption-color="FFA6A0BA" caption-placement="top-left"/>
         <hero background-color="FF0A0910" border="0" radius="8" margin="3" padding="2"/>
         <chipRow flex-direction="row" border="0" margin="0" padding="0"/>
-        <knob slider-type="rotary" slider-textbox="textbox-below" border="0"
+        <knob slider-type="rotary-horizontal-vertical" slider-textbox="textbox-below" border="0"
               caption-size="12" caption-color="FFA6A0BA" caption-placement="centred-top"/>
-        <smallknob slider-type="rotary" slider-textbox="textbox-below" border="0"
+        <smallknob slider-type="rotary-horizontal-vertical" slider-textbox="textbox-below" border="0"
                    caption-size="11" caption-color="FFA6A0BA" caption-placement="centred-top"/>
       </Classes>
       <Types>
