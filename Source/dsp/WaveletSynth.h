@@ -45,7 +45,12 @@ public:
 
         params = p;
         policy.setMode ((acv2::SeedMode) (int) p.seedMode);
-        policy.setGlobalSeed ((std::uint64_t) p.seed);
+        // Only (re)seed the strike RNG on an actual change — setGlobalSeed resets the
+        // strike stream, so calling it every block made Random-on-strike roll the SAME
+        // seed on every strike. Fixed/PerKey ignore the strike stream, so keeping
+        // global_ synced each block stays safe for them.
+        if (seedChanged || p.seedMode != SeedModeP::Random)
+            policy.setGlobalSeed ((std::uint64_t) p.seed);
 
         for (auto& v : voices)
             if (v.isActive())
