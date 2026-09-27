@@ -135,7 +135,9 @@ inline int         beatLabelToIndex (std::string_view s) { return tempo::indexOf
 // ── percent (signedPercent for ±mod-depth readouts) ────────────────────────
 inline std::string percentToText (double fraction01, bool signedPercent = false)
 {
-    return detail::fmt (signedPercent ? "%+.0f %%" : "%.0f %%", fraction01 * 100.0);
+    const double percent = std::round (fraction01 * 100.0);
+    if (percent == 0.0) return "0 %";                    // no "+0 %" / "-0 %"
+    return detail::fmt (signedPercent ? "%+.0f %%" : "%.0f %%", percent);
 }
 
 inline double textToPercent (std::string_view text) // → fraction (−1..1 typical)

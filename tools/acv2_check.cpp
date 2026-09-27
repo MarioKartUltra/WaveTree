@@ -560,6 +560,14 @@ static void testUnits()
     CHECK_EQ_STR(percentToText(0.45), "45 %");
     CHECK_EQ_STR(percentToText(0.45, true), "+45 %");
     CHECK_EQ_STR(percentToText(-0.30, true), "-30 %");
+    // A value that rounds to zero carries no sign: a depth knob at rest reads "0 %".
+    CHECK_EQ_STR(percentToText(0.0, true), "0 %");
+    CHECK_EQ_STR(percentToText(-0.0, true), "0 %");
+    CHECK_EQ_STR(percentToText(-1.0e-7, true), "0 %");
+    CHECK_EQ_STR(percentToText(0.004, true), "0 %");
+    CHECK_EQ_STR(percentToText(-0.004, false), "0 %");
+    CHECK_EQ_STR(percentToText(0.006, true), "+1 %");
+    CHECK_EQ_STR(percentToText(-0.006, true), "-1 %");
     CHECK_NEAR(textToPercent("45 %"), 0.45, 1e-12);
     CHECK_NEAR(textToPercent("-30 %"), -0.30, 1e-12);
 
