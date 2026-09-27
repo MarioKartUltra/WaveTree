@@ -103,9 +103,11 @@ struct WiringTest
                 fail (label, "did not return to its old state");
         }
 
-        // a radio chip may legitimately move more than one parameter (unit + sync flag)
-        juce::Button* radioAtStart = nullptr;
-        for (auto* r : radios) if (r->getToggleState()) radioAtStart = r;
+        // a radio chip may legitimately move more than one parameter (unit + sync flag).
+        // There can be several groups of chips on screen (one per control): each
+        // is put back to the chip it started on.
+        std::vector<juce::Button*> onAtStart;
+        for (auto* r : radios) if (r->getToggleState()) onAtStart.push_back (r);
         for (auto* r : radios)
         {
             if (r->getToggleState()) continue;
@@ -115,7 +117,8 @@ struct WiringTest
             if (changed.isEmpty()) fail ("radio chip '" + r->getButtonText() + "'", "changed no parameter");
             for (auto& id : changed) reached.addIfNotAlreadyThere (id);
         }
-        if (radioAtStart != nullptr) { radioAtStart->triggerClick(); pumpMs (80); }
+        for (auto* r : onAtStart)
+            if (! r->getToggleState()) { r->triggerClick(); pumpMs (80); }
 
         for (auto* s : sliders)
         {
