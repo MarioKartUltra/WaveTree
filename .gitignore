@@ -5,3 +5,6 @@ renders/
 *.o
 *.a
 .DS_Store
+
+# foleys WYSIWYG editor autosaves
+Resources/magic.sav*.xml
