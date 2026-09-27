@@ -398,8 +398,12 @@ void WaveTreeProcessor::saveTreeToState()
         if (std::abs (t.getBandGain (b) - 1.0f) > 0.001f)
             s << "B," << b << "," << juce::String (t.getBandGain (b), 3) << ";";
     for (int i = 0; i < wavetree::TreeEdit::kMaxNodes; ++i)
-        if (std::abs (t.getNodeGain (i) - 1.0f) > 0.001f)
+    {
+        if (t.getNodeLevel (i) >= 0.0f)                       // L = a painted level
+            s << "L," << i << "," << juce::String (t.getNodeLevel (i), 3) << ";";
+        else if (std::abs (t.getNodeGain (i) - 1.0f) > 0.001f)   // N = a gain, from older projects
             s << "N," << i << "," << juce::String (t.getNodeGain (i), 3) << ";";
+    }
     magicState.getPropertyRoot().setProperty ("treeGains", s, nullptr);
 }
 
@@ -416,6 +420,7 @@ void WaveTreeProcessor::loadTreeFromState()
         const float g = parts[2].getFloatValue();
         if (parts[0] == "B") t.setBandGain (idx, g);
         else if (parts[0] == "N") t.setNodeGain (idx, g);
+        else if (parts[0] == "L") t.setNodeLevel (idx, g);
     }
     t.bump();
 }

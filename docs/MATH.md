@@ -43,10 +43,25 @@ amplitude ±2^(−0.7(b−1)) · (0.3 + u), u ~ U[0,1); all other nodes are zero
 
 ## 3. Tree edit overlay (Source/dsp/TreeEdit.h)
 
-The interactive tree editor multiplies the generated coefficients before the
-IDWT:
+The interactive tree editor changes the generated coefficients before the
+IDWT. A band has a gain (the drawbar in the gutter). A node is either painted
+to a level or left to the generator:
 
-    c′[b,k] = c[b,k] · G_band[b] · G_node[off_b + k],   G ∈ [0, 2]
+    painted:   c′[b,k] = sgn(c[b,k]) · m(ℓ) · G_band[b]
+    otherwise: c′[b,k] = c[b,k] · G_node[off_b + k] · G_band[b],   G ∈ [0, 2]
+
+The level ℓ ∈ [0, 1] is the height drawn in the row. It is read on one decibel
+scale for the whole tree, tied to P = max |c| over the generated tree:
+
+    m(ℓ) = P · 10^((T − (1 − ℓ)·R) / 20),   T = 20·log10(2),  R = 10·T ≈ 60.2 dB
+    m(ℓ) = 0 for ℓ < 0.03
+
+so the top of a row is 2P, the generated peak sits at ℓ = 0.9, and the bottom
+is silence. A level sets the magnitude outright, which is what lets a node the
+generator left at or near zero be painted in; a multiplier cannot do that. A
+node at exactly zero has no sign and takes (−1)^k. P is measured before the
+edits, so painting never moves the scale. G_node is what painting wrote before
+levels existed; projects saved then still load and sound the same.
 
 G values live in lock-free atomics (UI writes, audio reads at rebuild time);
 every edit bumps a version counter and the synth schedules ONE crossfaded

@@ -24,9 +24,10 @@ CoeffTreeView::CoeffTreeView (WaveTreeProcessor* p) : proc (p)
 {
     mags.assign ((size_t) kFrame, 0.0f);
     setTooltip ("Coefficient tree: rows are octave bands (coarse at the bottom). "
-                "Drag in the left gutter to set a band gain (drawbar). Paint in a row to set "
-                "node gains (top = 2x, bottom = mute). Right-drag erases. Double-click the "
-                "gutter to reset a band, double-click the grid to reset everything.");
+                "Drag in the left gutter to set a band gain (drawbar). Paint in a row to draw "
+                "the level of each node: the bar follows the mouse, the bottom of the row is "
+                "silence, and a stroke stays in the row it started in. Right-drag erases. "
+                "Double-click the gutter to reset a band, double-click the grid to reset everything.");
     startTimerHz (30);
 }
 
@@ -35,6 +36,36 @@ juce::Rectangle<float> CoeffTreeView::rowArea (int b) const
     const auto r = getLocalBounds().toFloat().reduced (2.0f);
     const float rh = r.getHeight() / (float) kBands;
     return { r.getX(), r.getBottom() - rh * (float) (b + 1), r.getWidth(), rh };
+}
+
+juce::Rectangle<float> CoeffTreeView::gridArea (int b) const
+{
+    auto row = rowArea (b);
+    row.removeFromLeft (kGutterW);
+    return row.reduced (1.0f, 1.0f);
+}
+
+juce::Rectangle<float> CoeffTreeView::nodeArea (int b, int k) const
+{
+    const auto grid = gridArea (b);
+    const float cw = grid.getWidth() / (float) bandSize (b);
+    return { grid.getX() + cw * (float) k, grid.getY(), cw, grid.getHeight() };
+}
+
+// One scale for the whole tree, so a bar's height means the same in every row
+// and a painted bar is as high as it was drawn.
+float CoeffTreeView::shownLevel (int b, int k) const
+{
+    using wavetree::TreeEdit;
+    if (proc == nullptr) return 0.0f;
+    const int   i     = bandOff (b) + k;
+    const auto& tree  = proc->treeEdit();
+    const float level = tree.getNodeLevel (i);
+    if (level >= 0.0f)
+        return level < (float) TreeEdit::kMuteBelow ? 0.0f : level;
+
+    return (float) TreeEdit::magnitudeToLevel ((double) mags[(size_t) i] * (double) tree.getNodeGain (i),
+                                               (double) treePeak);
 }
 
 int CoeffTreeView::bandAtY (float y) const
@@ -52,13 +83,8 @@ void CoeffTreeView::timerCallback()
     {
         lastStamp = stamp;
         proc->copyCoeffMags (mags);
-        for (int b = 0; b < kBands; ++b)
-        {
-            float pk = 1.0e-9f;
-            const int off = bandOff (b), n = bandSize (b);
-            for (int k = 0; k < n; ++k) pk = std::max (pk, mags[(size_t) (off + k)]);
-            bandPeak[(size_t) b] = pk;
-        }
+        treePeak = 0.0f;
+        for (auto m : mags) treePeak = std::max (treePeak, m);
     }
     repaint();   // gains can change without a rebuild stamp (live painting)
 }
@@ -92,22 +118,21 @@ void CoeffTreeView::paint (juce::Graphics& g)
         g.setFont (monoFont (9.0f));
         g.drawText (b == 0 ? "A" : "d" + juce::String (b), gutter, juce::Justification::centred, false);
 
-        // nodes
+        // nodes: bar height = level on the tree's scale
         row.reduce (1.0f, 1.0f);
         const int off = bandOff (b), n = bandSize (b);
         const float cw = row.getWidth() / (float) n;
-        const float pk = bandPeak[(size_t) b];
         for (int k = 0; k < n; ++k)
         {
-            const float ng  = tree.getNodeGain (off + k);
-            const float mag = juce::jlimit (0.0f, 1.0f, mags[(size_t) (off + k)] / pk);
-            const float h   = std::max (1.5f, row.getHeight() * mag * juce::jlimit (0.0f, 1.0f, ng * 0.5f + 0.06f));
+            const float shown  = shownLevel (b, k);
+            const bool  edited = tree.getNodeLevel (off + k) >= 0.0f
+                                 || std::abs (tree.getNodeGain (off + k) - 1.0f) > 0.01f;
+            const float h = std::max (1.5f, row.getHeight() * shown);
             juce::Rectangle<float> cell (row.getX() + cw * (float) k, row.getBottom() - h,
                                          std::max (1.0f, cw - (cw > 3.0f ? 1.0f : 0.0f)), h);
-            const bool edited = std::abs (ng - 1.0f) > 0.01f;
-            auto col = kAccent.withAlpha (0.25f + 0.65f * mag);
-            if (ng < 0.02f)      col = kOutline.withAlpha (0.5f);
-            else if (edited)     col = kAccent.brighter (0.25f).withAlpha (0.4f + 0.6f * juce::jlimit (0.0f, 1.0f, ng * 0.5f));
+            auto col = kAccent.withAlpha (0.25f + 0.65f * shown);
+            if (edited && shown <= 0.0f) col = kOutline.withAlpha (0.5f);                 // muted by hand
+            else if (edited)             col = kAccent.brighter (0.25f).withAlpha (0.4f + 0.6f * shown);
             g.setColour (col.withMultipliedAlpha (bg < 0.02f ? 0.25f : 1.0f));
             g.fillRect (cell);
         }
@@ -118,34 +143,61 @@ void CoeffTreeView::paint (juce::Graphics& g)
     }
 }
 
+// A stroke belongs to the row it started in. The rows are thin, so the mouse
+// leaves them all the time: above the row is the top of the scale, below it is
+// silence, and the neighbouring rows are left alone.
 void CoeffTreeView::applyEdit (const juce::MouseEvent& e, bool erase)
 {
-    if (proc == nullptr) return;
+    if (proc == nullptr || strokeBand < 0) return;
     auto& tree = proc->treeEdit();
-    const int b = bandAtY ((float) e.position.y);
-    if (b < 0) return;
-    auto row = rowArea (b);
+    const int b = strokeBand;
 
-    if (e.position.x < row.getX() + kGutterW)     // gutter: band gain 0..2
+    if (strokeInGutter)                           // gutter: band gain 0..2
     {
-        auto gutter = row.removeFromLeft (kGutterW).reduced (6.0f, 3.0f);
+        auto gutter = rowArea (b).removeFromLeft (kGutterW).reduced (6.0f, 3.0f);
         const float g01 = juce::jlimit (0.0f, 1.0f, (e.position.x - gutter.getX()) / gutter.getWidth());
         tree.setBandGain (b, erase ? 1.0f : g01 * 2.0f);
     }
-    else                                          // grid: per-node gain paint
+    else                                          // grid: draw the level of each node
     {
-        row.removeFromLeft (kGutterW);
-        const int n = bandSize (b);
-        const int k = juce::jlimit (0, n - 1, (int) ((e.position.x - row.getX()) / row.getWidth() * (float) n));
-        const float yfrac = juce::jlimit (0.0f, 1.0f, (e.position.y - row.getY()) / row.getHeight());
-        tree.setNodeGain (bandOff (b) + k, erase ? 1.0f : (1.0f - yfrac) * 2.0f);
+        const auto grid = gridArea (b);
+        const int  n    = bandSize (b), off = bandOff (b);
+        const int  k    = juce::jlimit (0, n - 1, (int) std::floor ((e.position.x - grid.getX()) / grid.getWidth() * (float) n));
+        const float level = juce::jlimit (0.0f, 1.0f, (grid.getBottom() - e.position.y) / grid.getHeight());
+
+        // the mouse skips nodes when it moves fast: fill in from the last one
+        const int   from      = lastNode < 0 ? k : lastNode;
+        const float fromLevel = lastNode < 0 ? level : lastLevel;
+        const int   steps     = std::abs (k - from);
+        for (int s = 0; s <= steps; ++s)
+        {
+            const int   node = from + (k >= from ? s : -s);
+            const float t    = steps == 0 ? 1.0f : (float) s / (float) steps;
+            if (erase) tree.clearNode (off + node);
+            else       tree.setNodeLevel (off + node, fromLevel + t * (level - fromLevel));
+        }
+        lastNode  = k;
+        lastLevel = level;
     }
     tree.bump();
 }
 
-void CoeffTreeView::mouseDown (const juce::MouseEvent& e) { applyEdit (e, e.mods.isRightButtonDown() || e.mods.isAltDown()); }
+void CoeffTreeView::mouseDown (const juce::MouseEvent& e)
+{
+    strokeBand = bandAtY ((float) e.position.y);
+    strokeInGutter = strokeBand >= 0 && e.position.x < rowArea (strokeBand).getX() + kGutterW;
+    lastNode = -1;
+    applyEdit (e, e.mods.isRightButtonDown() || e.mods.isAltDown());
+}
+
 void CoeffTreeView::mouseDrag (const juce::MouseEvent& e) { applyEdit (e, e.mods.isRightButtonDown() || e.mods.isAltDown()); }
-void CoeffTreeView::mouseUp   (const juce::MouseEvent&)   { if (proc != nullptr) proc->treeEditGesture(); }
+
+void CoeffTreeView::mouseUp (const juce::MouseEvent&)
+{
+    strokeBand = -1;
+    lastNode = -1;
+    if (proc != nullptr) proc->treeEditGesture();
+}
 
 void CoeffTreeView::mouseDoubleClick (const juce::MouseEvent& e)
 {
@@ -156,7 +208,7 @@ void CoeffTreeView::mouseDoubleClick (const juce::MouseEvent& e)
     {
         tree.setBandGain (b, 1.0f);
         const int off = bandOff (b), n = bandSize (b);
-        for (int k = 0; k < n; ++k) tree.setNodeGain (off + k, 1.0f);
+        for (int k = 0; k < n; ++k) tree.clearNode (off + k);
     }
     else
         tree.reset();

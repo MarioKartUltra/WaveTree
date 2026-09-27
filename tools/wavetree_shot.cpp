@@ -17,6 +17,7 @@
 //    ./build/wavetree_shot [outdir]
 // =============================================================================
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -245,8 +246,192 @@ struct WiringTest
     }
 };
 
+// -----------------------------------------------------------------------------
+//  Painting the coefficient tree with the mouse.
+// -----------------------------------------------------------------------------
+static CoeffTreeView* findTree (juce::Component& c)
+{
+    if (auto* t = dynamic_cast<CoeffTreeView*> (&c)) return t;
+    for (int i = 0; i < c.getNumChildComponents(); ++i)
+        if (auto* t = findTree (*c.getChildComponent (i))) return t;
+    return nullptr;
+}
+
+static int testTreePainting()
+{
+    using wavetree::TreeEdit;
+    int failures = 0;
+    auto expect = [&] (bool ok, const juce::String& what)
+    {
+        if (ok) return;
+        ++failures;
+        std::printf ("  FAIL %s\n", what.toRawUTF8());
+    };
+    std::printf ("  [tree painting]\n");
+
+    WaveTreeProcessor proc;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    setP (proc.state(), "mode", 2.0f);                         // Atoms: most nodes are zero
+    std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+    ed->setVisible (true);
+    pump (0.5);
+
+    auto* view = findTree (*ed);
+    expect (view != nullptr, "the tree view is in the editor");
+    if (view == nullptr) return failures;
+
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    auto blocks = [&] (int n) { for (int i = 0; i < n; ++i) { proc.processBlock (buf, midi); midi.clear(); } };
+    midi.addEvent (juce::MidiMessage::noteOn (1, 57, 0.9f), 0);
+    blocks (8);
+    pump (0.3);                                                // the view copies the magnitudes
+
+    std::vector<float> mags;
+    proc.copyCoeffMags (mags);
+    const int band = 5;                                        // 32 nodes: wide enough to aim at
+    std::vector<int> silent;
+    for (int k = 0; k < CoeffTreeView::bandSize (band); ++k)
+        if (mags[(size_t) (CoeffTreeView::bandOff (band) + k)] <= 0.0f) silent.push_back (k);
+    expect (silent.size() >= 3, "the test band has nodes the generator left at zero");
+    if (silent.size() < 3) return failures;
+
+    auto& tree = proc.treeEdit();
+    auto index = [&] (int k) { return CoeffTreeView::bandOff (band) + k; };
+
+    const auto src = juce::Desktop::getInstance().getMainMouseSource();
+    auto event = [&] (juce::Point<float> at, juce::Point<float> from, bool right, bool dragged)
+    {
+        const juce::ModifierKeys mods (right ? juce::ModifierKeys::rightButtonModifier
+                                             : juce::ModifierKeys::leftButtonModifier);
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (src, at, mods, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, view, view, now, from, now, 1, dragged);
+    };
+    auto click = [&] (juce::Point<float> at, bool right = false)
+    {
+        view->mouseDown (event (at, at, right, false));
+        view->mouseUp (event (at, at, right, false));
+    };
+    auto drag = [&] (juce::Point<float> from, juce::Point<float> to)
+    {
+        view->mouseDown (event (from, from, false, false));
+        view->mouseDrag (event (to, from, false, true));
+        view->mouseUp (event (to, from, false, true));
+    };
+    // a point in a node's cell, a fraction of the row's height up from the bottom
+    auto pointAt = [&] (int k, float heightFraction)
+    {
+        const auto cell = view->nodeArea (band, k);
+        return juce::Point<float> (cell.getCentreX(), cell.getBottom() - heightFraction * cell.getHeight());
+    };
+
+    // 1. a node at zero can be painted in, and it is heard
+    std::vector<float> before, after;
+    proc.copyWavetable (before);
+    const int a = silent[0];
+    expect (view->shownLevel (band, a) < 0.01f, "a node at zero shows no bar");
+    click (pointAt (a, 0.75f));
+    expect (std::abs (tree.getNodeLevel (index (a)) - 0.75f) < 0.03f,
+            "clicking three quarters up a row paints that level (got " + juce::String (tree.getNodeLevel (index (a)), 3) + ")");
+    expect (std::abs (view->shownLevel (band, a) - 0.75f) < 0.03f, "the bar is drawn as high as it was painted");
+    blocks (12);                                               // the playing voice rebuilds its table
+    proc.copyWavetable (after);
+    float change = 0.0f;
+    for (size_t i = 0; i < before.size() && i < after.size(); ++i)
+        change = std::max (change, std::abs (after[i] - before[i]));
+    expect (change > 0.01f, "painting a node that was at zero changes the sound");
+
+    // 2. a drag stays in the row it started in: going past the top is the top
+    const int b2 = silent[1];
+    const auto above = view->nodeArea (band, b2).getY() - 60.0f;
+    drag (pointAt (b2, 0.4f), { view->nodeArea (band, b2).getCentreX(), above });
+    expect (tree.getNodeLevel (index (b2)) > 0.99f, "dragging above the row paints the top of that row");
+    bool neighboursUntouched = true;
+    for (int nb = band + 1; nb <= band + 3 && nb < CoeffTreeView::kBands; ++nb)
+        for (int k = 0; k < CoeffTreeView::bandSize (nb); ++k)
+            if (tree.getNodeLevel (CoeffTreeView::bandOff (nb) + k) >= 0.0f
+                || std::abs (tree.getNodeGain (CoeffTreeView::bandOff (nb) + k) - 1.0f) > 1.0e-6f)
+                neighboursUntouched = false;
+    expect (neighboursUntouched, "and leaves the rows above alone");
+
+    // 3. past the bottom mutes
+    const int c = silent[2];
+    const auto below = view->nodeArea (band, c).getBottom() + 60.0f;
+    drag (pointAt (c, 0.5f), { view->nodeArea (band, c).getCentreX(), below });
+    expect (tree.getNodeLevel (index (c)) >= 0.0f && tree.getNodeLevel (index (c)) < 0.01f,
+            "dragging below the row paints the bottom: muted");
+
+    // 4. a drag across the row paints every node it passes
+    drag (pointAt (silent[0], 0.6f), pointAt (silent[2], 0.6f));
+    expect (std::abs (tree.getNodeLevel (index (silent[2])) - 0.6f) < 0.03f, "a drag along a row paints where it ends");
+    bool between = true;
+    for (int k = std::min (silent[0], silent[2]); k <= std::max (silent[0], silent[2]); ++k)
+        between = between && std::abs (tree.getNodeLevel (index (k)) - 0.6f) < 0.03f;
+    expect (between, "and every node it passed on the way");
+
+    // 5. the tree's own peak is drawn at 90% of its row
+    int peakBand = 1, peakK = 0;
+    float peak = 0.0f;
+    for (int bnd = 1; bnd < CoeffTreeView::kBands; ++bnd)
+        for (int k = 0; k < CoeffTreeView::bandSize (bnd); ++k)
+            if (mags[(size_t) (CoeffTreeView::bandOff (bnd) + k)] > peak)
+            { peak = mags[(size_t) (CoeffTreeView::bandOff (bnd) + k)]; peakBand = bnd; peakK = k; }
+    if (tree.getNodeLevel (CoeffTreeView::bandOff (peakBand) + peakK) < 0.0f)
+        expect (std::abs (view->shownLevel (peakBand, peakK) - 0.9f) < 0.02f,
+                "the largest generated coefficient is drawn at 90% of its row");
+
+    // 6. right-click erases
+    click (pointAt (a, 0.5f), true);
+    expect (tree.getNodeLevel (index (a)) < 0.0f && std::abs (tree.getNodeGain (index (a)) - 1.0f) < 1.0e-6f,
+            "a right-click gives the node back to the generator");
+
+    // 7. painted levels are saved with the project
+    click (pointAt (a, 0.3f));
+    juce::MemoryBlock saved;
+    proc.getStateInformation (saved);
+    {
+        WaveTreeProcessor other;
+        other.setStateInformation (saved.getData(), (int) saved.getSize());
+        pump (0.2);
+        expect (std::abs (other.treeEdit().getNodeLevel (index (a)) - tree.getNodeLevel (index (a))) < 0.002f,
+                "a painted level comes back when the project is reopened");
+        bool all = true;
+        int painted = 0;
+        for (int i = 0; i < TreeEdit::kMaxNodes; ++i)
+        {
+            const float was = tree.getNodeLevel (i), is = other.treeEdit().getNodeLevel (i);
+            if (was >= 0.0f) ++painted;
+            all = all && ((was < 0.0f && is < 0.0f) || std::abs (was - is) < 0.002f);
+        }
+        expect (all && painted >= 3, "and so does every other one");
+    }
+
+    // 8. gains written by the version before still load as gains
+    {
+        WaveTreeProcessor old;
+        old.treeEdit().setNodeGain (40, 0.5f);
+        old.treeEdit().setBandGain (3, 1.5f);
+        old.treeEditGesture();
+        juce::MemoryBlock oldState;
+        old.getStateInformation (oldState);
+        WaveTreeProcessor other;
+        other.setStateInformation (oldState.getData(), (int) oldState.getSize());
+        pump (0.2);
+        expect (std::abs (other.treeEdit().getNodeGain (40) - 0.5f) < 0.002f
+                    && std::abs (other.treeEdit().getBandGain (3) - 1.5f) < 0.002f
+                    && other.treeEdit().getNodeLevel (40) < 0.0f,
+                "a project from before painted levels loads its gains");
+    }
+
+    ed.reset();
+    return failures;
+}
+
 static int runSelfTest()
 {
+    const int paintingFailures = testTreePainting();
+
     WaveTreeProcessor proc;
     proc.setRateAndBufferSizeDetails (48000.0, 512);
     proc.prepareToPlay (48000.0, 512);
@@ -256,6 +441,7 @@ static int runSelfTest()
     pump (0.4);
 
     WiringTest test { proc, {}, 0 };
+    test.failures += paintingFailures;
     auto& apvts = proc.state();
 
     const char* modeNames[] = { "Bands", "Cascade", "Atoms" };
@@ -483,9 +669,9 @@ int main (int argc, char** argv)
             t.setBandGain (5, 0.35f);
             t.setBandGain (8, 1.55f);
             for (int k = 0; k < 64; ++k)
-                t.setNodeGain (64 + k, 1.0f + 0.9f * std::sin ((float) k / 64.0f * 6.2831853f));
+                t.setNodeLevel (64 + k, 0.55f + 0.35f * std::sin ((float) k / 64.0f * 6.2831853f));
             for (int k = 110; k <= 199; ++k)
-                t.setNodeGain (512 + k, 0.0f);
+                t.setNodeLevel (512 + k, 0.0f);
             t.bump();
             p.treeEditGesture();
         }, true });

@@ -195,19 +195,12 @@ private:
         for (int i = 0; i < kFrame; ++i) dispMags[(size_t) i] = (float) std::fabs (coeffBuf[(size_t) i]);
         ++stamp;
 
-        // TreeEdit overlay: per-band and per-node gains (lock-free reads)
+        // TreeEdit overlay: band gains, painted levels and node gains (lock-free reads)
         const int nb = dwt.numBands();
         if (tree != nullptr && ! tree->isIdentity())
-        {
-            for (int b = 0; b < nb; ++b)
-            {
-                const int off = dwt.bandOff (b), n = dwt.bandSize (b);
-                const double bg = (double) tree->getBandGain (b);
-                for (int k = 0; k < n; ++k)
-                    gainBuf[(size_t) (off + k)] = coeffBuf[(size_t) (off + k)] * bg
-                                                  * (double) tree->getNodeGain (off + k);
-            }
-        }
+            applyTreeEdit (*tree, coeffBuf.data(), gainBuf.data(), nb,
+                           [this] (int b) { return dwt.bandOff (b); },
+                           [this] (int b) { return dwt.bandSize (b); });
         else
             std::copy (coeffBuf.begin(), coeffBuf.end(), gainBuf.begin());
 

@@ -6,11 +6,15 @@
 //
 //    TreeView    — THE hero: interactive wavelet coefficient-tree editor.
 //                  Rows = octave bands (coarse at the bottom), cells = nodes.
-//                  Left gutter drag = band gain (drawbar mute/boost); painting
-//                  in a row sets per-node gains (top = 2x, bottom = mute);
-//                  right-drag erases (gain -> 1); double-click gutter resets
-//                  the band. Edits land in the lock-free TreeEdit overlay and
-//                  regenerate the playing voices through a crossfade.
+//                  Left gutter drag = band gain (drawbar mute/boost). Painting
+//                  in a row sets each node's LEVEL: the bar is drawn where the
+//                  mouse is, on one decibel scale for the whole tree (top =
+//                  twice the loudest generated coefficient, bottom = silence),
+//                  so a node the generator left at zero can be painted in. A
+//                  stroke stays in the row it started in. Right-drag erases;
+//                  double-click gutter resets the band. Edits land in the
+//                  lock-free TreeEdit overlay and regenerate the playing voices
+//                  through a crossfade.
 //    WaveScope   — current wavelet wavetable (one cycle) + output scope ghost.
 //    DhSpectrum  — D(h) multifractal (Legendre) spectrum of the current tree.
 //    SeedPanel   — seed readout + dice (roll) + lock (freeze the last roll).
@@ -50,10 +54,6 @@ public:
     void mouseUp   (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
-private:
-    void timerCallback() override;
-    void applyEdit (const juce::MouseEvent&, bool erase);
-
     // fixed dyadic layout (kFrame = 2048, kLevels = 10 -> 11 bands)
     static constexpr int kFrame  = wavetree::WaveletVoice::kFrame;
     static constexpr int kLevels = wavetree::WaveletVoice::kLevels;
@@ -61,14 +61,30 @@ private:
     static int bandSize (int b) { return b == 0 ? (kFrame >> kLevels) : (kFrame >> (kLevels - b + 1)); }
     static int bandOff  (int b) { int o = kFrame >> kLevels; for (int i = 1; i < b; ++i) o += bandSize (i); return b == 0 ? 0 : o; }
 
+    // Where node k of band b is drawn (the full height of its row), and how
+    // tall its bar is as a fraction of that height.
+    juce::Rectangle<float> nodeArea (int b, int k) const;
+    float shownLevel (int b, int k) const;
+
+private:
+    void timerCallback() override;
+    void applyEdit (const juce::MouseEvent&, bool erase);
+
     juce::Rectangle<float> rowArea (int b) const;   // band row (bottom = coarse)
+    juce::Rectangle<float> gridArea (int b) const;  // the row without its gutter
     int bandAtY (float y) const;
 
     WaveTreeProcessor* proc = nullptr;
     std::vector<float> mags;
-    std::array<float, (size_t) kBands> bandPeak {};
+    float treePeak = 0.0f;               // the largest generated magnitude: the scale's reference
     std::uint32_t lastStamp = 0xFFFFFFFF;
     static constexpr float kGutterW = 58.0f;
+
+    // the stroke in progress
+    int   strokeBand = -1;               // the row it started in; -1 = none
+    bool  strokeInGutter = false;
+    int   lastNode = -1;                 // where the previous mouse event painted
+    float lastLevel = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CoeffTreeView)
 };
