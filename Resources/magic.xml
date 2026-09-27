@@ -3,7 +3,13 @@
 <!-- WaveTree II default layout: violet-on-cold-near-black laboratory fascia.
      The interactive coefficient tree is the hero (left, largest area); the
      instrument fascia (engine / morph / envelope / tone / LFOs / mod) wraps it.
-     Stealth-beta: no title text anywhere - identity = sigil + accent + BETA. -->
+     Stealth-beta: no title text anywhere - identity = sigil + accent + BETA.
+
+     Sizing rules (foleys gives every item margin=5 padding=5 and a dark grey
+     background unless told otherwise, so the Types below reset all three):
+       - every knob row ends in an 18px "chip line": SyncKnob draws its ms/beat
+         chip there, a toggle chip can sit there, and class="knobgap" leaves it
+         empty so neighbouring knobs stay the same size. -->
 <magic>
   <Styles>
     <Style name="default">
@@ -13,21 +19,38 @@
                 margin="3" padding="6" flex-direction="row"
                 caption-size="13" caption-color="FFA6A0BA" caption-placement="top-left"/>
         <hero background-color="FF0A0910" border="0" radius="8" margin="3" padding="2"/>
-        <chipRow flex-direction="row" border="0" margin="0" padding="0"/>
-        <knob slider-type="rotary-horizontal-vertical" slider-textbox="textbox-below" border="0"
-              caption-size="12" caption-color="FFA6A0BA" caption-placement="centred-top"/>
-        <smallknob slider-type="rotary-horizontal-vertical" slider-textbox="textbox-below" border="0"
-                   caption-size="11" caption-color="FFA6A0BA" caption-placement="centred-top"/>
+        <row flex-direction="row"/>
+        <stack flex-direction="column"/>
+        <knobgap padding="0 0 18 0"/>
+        <chip width="56" max-width="56" height="18" max-height="18" margin="1 2"
+              flex-align-self="center"/>
+        <rowlabel width="16" max-width="16" font-size="12" justification="centred"
+                  label-text="FFA275F5"/>
       </Classes>
       <Types>
-        <Slider border="0" slider-textbox="textbox-below" lookAndFeel="LnfV2"
-                background-color="00000000"/>
-        <ToggleButton border="0" caption-size="0" lookAndFeel="LnfV2" max-height="26"/>
-        <TextButton border="0" caption-size="0" lookAndFeel="LnfV2"/>
-        <ComboBox border="0" caption-size="11" caption-color="FFA6A0BA"
-                  caption-placement="centred-top" lookAndFeel="LnfV2" max-height="52"/>
-        <Meter border="0" background-color="00000000"/>
-        <View border="0"/>
+        <View border="0" margin="0" padding="0" background-color="00000000"/>
+        <Slider border="0" margin="0" padding="0" background-color="00000000"
+                slider-type="rotary-horizontal-vertical" slider-textbox="textbox-below"
+                lookAndFeel="LnfV2"
+                caption-size="12" caption-color="FFA6A0BA" caption-placement="centred-top"/>
+        <SyncKnob border="0" margin="0" padding="0" background-color="00000000"
+                  lookAndFeel="LnfV2"
+                  caption-size="12" caption-color="FFA6A0BA" caption-placement="centred-top"/>
+        <ToggleButton border="0" margin="2" padding="0" background-color="00000000"
+                      caption-size="0" lookAndFeel="LnfV2"/>
+        <TextButton border="0" margin="2" padding="0" background-color="00000000"
+                    caption-size="0" lookAndFeel="LnfV2"/>
+        <ComboBox border="0" margin="2" padding="0" background-color="00000000"
+                  caption-size="11" caption-color="FFA6A0BA" caption-placement="centred-top"
+                  lookAndFeel="LnfV2" max-height="42"/>
+        <Label border="0" margin="0" padding="0" background-color="00000000" lookAndFeel="LnfV2"/>
+        <Meter border="0" margin="2" padding="0" background-color="00000000"
+               bar-background-color="FF0A0910" bar-fill-color="FFA275F5"
+               outline-color="FF2C2942" tickmark-color="FFA6A0BA"/>
+        <Sigil border="0" margin="0" padding="0" background-color="00000000"/>
+        <PresetBar border="0" margin="0" padding="0" background-color="00000000" lookAndFeel="LnfV2"/>
+        <SeedPanel border="0" margin="0" padding="0" background-color="00000000" lookAndFeel="LnfV2"/>
+        <KeyboardComponent border="0" margin="2" padding="0" background-color="00000000"/>
       </Types>
       <Palettes>
         <default/>
@@ -36,26 +59,26 @@
   </Styles>
 
   <View id="root" resizable="1" resize-corner="1" width="1150" height="740"
-        min-width="960" min-height="620" flex-direction="column"
+        min-width="1000" min-height="660" flex-direction="column"
         background-color="FF0E0D17" padding="4" margin="0" border="0">
 
     <!-- ── header: sigil | presets | seed dice+lock | output meter ─────── -->
-    <View max-height="62" flex-direction="row" border="0" margin="2" padding="0">
+    <View max-height="58" flex-direction="row" margin="2">
       <Sigil width="170" max-width="170" tooltip="Wavelet synthesis: a coefficient tree, inverted."/>
       <PresetBar flex-grow="1" tooltip="Preset picker + save."/>
       <SeedPanel width="240" max-width="240"
                  tooltip="Stochastic seed: last-played value, dice roll, lock."/>
-      <Meter level-source="output" width="76" max-width="76" tooltip="Output level"/>
+      <Meter source="output" width="76" max-width="76" tooltip="Output level"/>
     </View>
 
     <!-- ── main: hero tree + fascia columns ────────────────────────────── -->
-    <View flex-grow="1" flex-direction="row" border="0" margin="0" padding="0">
+    <View flex-grow="1" flex-direction="row">
 
       <!-- hero column -->
-      <View flex-grow="1.7" flex-direction="column" border="0" margin="0" padding="0">
+      <View flex-grow="1.7" flex-direction="column">
         <TreeView flex-grow="2.4" class="hero"
                   tooltip="Coefficient tree editor. Gutter drag: band gain. Paint rows: node gains (top = boost, bottom = mute). Right-drag erases; double-click gutter resets a band; double-click grid resets all."/>
-        <View flex-grow="1" flex-direction="row" border="0" margin="0" padding="0">
+        <View flex-grow="1" flex-direction="row">
           <WaveScope flex-grow="1.6" class="hero"
                      tooltip="Current wavelet wavetable (one cycle) + live output scope."/>
           <DhSpectrum flex-grow="1" class="hero"
@@ -63,116 +86,112 @@
         </View>
       </View>
 
-      <!-- fascia column A: engine / modes / morph / envelope / tone -->
-      <View width="285" max-width="285" flex-direction="column" border="0" margin="0" padding="0">
-        <View class="fascia" caption="ENGINE" max-height="86">
+      <!-- fascia column A: engine / mode / morph + osc / envelope / tone -->
+      <View width="288" max-width="288" flex-direction="column">
+        <View class="fascia" caption="ENGINE" min-height="76" max-height="76">
           <ComboBox parameter="mode" caption="Mode" tooltip="Tree fill: Bands drawbar / multifractal Cascade / sparse Atoms."/>
           <ComboBox parameter="wavelet" caption="Wavelet" tooltip="Wavelet family used for the inverse transform."/>
           <ComboBox parameter="seedMode" caption="Seed Policy" tooltip="Fixed: one global seed. Per-Key: each key its own reproducible character. Random: fresh roll each strike (lock a good one)."/>
         </View>
 
-        <View class="fascia" caption="BANDS" visibility="viewBands" max-height="128">
-          <Slider parameter="tilt" class="knob" caption="Tilt" tooltip="Spectral slope across octave bands."/>
-          <Slider parameter="formant" class="knob" caption="Formant" tooltip="Centre of the band emphasis (a wavelet formant)."/>
-          <Slider parameter="bandQ" class="knob" caption="Band Q" tooltip="Width of the band emphasis."/>
+        <!-- exactly one of these three is visible, following the Mode menu -->
+        <View class="fascia" caption="BANDS" visibility="viewBands">
+          <Slider parameter="tilt" caption="Tilt" tooltip="Spectral slope across octave bands."/>
+          <Slider parameter="formant" caption="Formant" tooltip="Centre of the band emphasis (a wavelet formant)."/>
+          <Slider parameter="bandQ" caption="Band Q" tooltip="Width of the band emphasis."/>
         </View>
-        <View class="fascia" caption="CASCADE" visibility="viewCascade" max-height="128">
-          <Slider parameter="hurst" class="knob" caption="Hurst" tooltip="Hurst exponent: spectral slope of the multifractal cascade (high = smooth)."/>
-          <Slider parameter="intermittency" class="knob" caption="Intermit" tooltip="Cascade intermittency: multifractal burstiness (widens the D(h) arch)."/>
+        <View class="fascia" caption="CASCADE" visibility="viewCascade">
+          <Slider parameter="hurst" caption="Hurst" tooltip="Hurst exponent: spectral slope of the multifractal cascade (high = smooth)."/>
+          <Slider parameter="intermittency" caption="Intermittency" tooltip="Cascade intermittency: multifractal burstiness (widens the D(h) arch)."/>
         </View>
-        <View class="fascia" caption="ATOMS" visibility="viewAtoms" max-height="128">
-          <Slider parameter="density" class="knob" caption="Density" tooltip="Fraction of nonzero coefficients (sparse wavelet grains)."/>
-        </View>
-
-        <View class="fascia" caption="MORPH" max-height="120">
-          <View flex-direction="column" border="0" width="70" max-width="70">
-            <ToggleButton parameter="morphOn" text="ON" tooltip="Periodically evolve the seed and crossfade tables."/>
-            <ToggleButton parameter="morphSync" text="BEATS" tooltip="Morph interval follows the host tempo."/>
-          </View>
-          <Slider parameter="morphMs" class="knob" caption="Interval" tooltip="Morph interval (free-run, ms)."/>
-          <ComboBox parameter="morphDiv" caption="Beat" tooltip="Morph interval as a beat division when BEATS is on."/>
+        <View class="fascia" caption="ATOMS" visibility="viewAtoms">
+          <Slider parameter="density" caption="Density" tooltip="Fraction of nonzero coefficients (sparse wavelet grains)."/>
         </View>
 
-        <View class="fascia" caption="ENVELOPE" flex-direction="column" flex-grow="1">
-          <View class="chipRow" flex-grow="1.6">
-            <Slider parameter="attackMs" class="smallknob" caption="Attack" tooltip="Amp attack (ms, or beat division when synced)."/>
-            <Slider parameter="decayMs" class="smallknob" caption="Decay" tooltip="Amp decay (ms, or beat division when synced)."/>
-            <Slider parameter="sustain" class="smallknob" caption="Sustain" tooltip="Sustain level."/>
-            <Slider parameter="releaseMs" class="smallknob" caption="Release" tooltip="Amp release (ms, or beat division when synced)."/>
+        <View class="row">
+          <View class="fascia" caption="MORPH" flex-grow="1.25">
+            <ToggleButton parameter="morphOn" text="on" class="chip" width="44" max-width="44"
+                          tooltip="Periodically evolve the seed and crossfade tables."/>
+            <SyncKnob base="morph" caption="Interval"
+                      tooltip="Morph interval: free time, or a beat division that follows the host tempo."/>
           </View>
-          <View class="chipRow" max-height="46">
-            <ToggleButton parameter="attackSync" text="A:BT" tooltip="Attack in beats."/>
-            <ComboBox parameter="attackDiv" caption="" tooltip="Attack beat division."/>
-            <ToggleButton parameter="decaySync" text="D:BT" tooltip="Decay in beats."/>
-            <ComboBox parameter="decayDiv" caption="" tooltip="Decay beat division."/>
-            <ToggleButton parameter="releaseSync" text="R:BT" tooltip="Release in beats."/>
-            <ComboBox parameter="releaseDiv" caption="" tooltip="Release beat division."/>
+          <View class="fascia" caption="OSC" flex-direction="column">
+            <Slider parameter="voices" caption="Voices" tooltip="Polyphony: how many notes can sound at once (1 to 16)."/>
+            <ToggleButton parameter="antiAlias" text="anti-alias" class="chip"
+                          width="68" max-width="68"
+                          tooltip="Mip-mapped anti-aliased oscillator read (cleaner high notes)."/>
           </View>
         </View>
 
-        <View class="fascia" caption="TONE" max-height="128">
-          <Slider parameter="cutoffHz" class="smallknob" caption="Cutoff" tooltip="Output low-pass cutoff (Hz)."/>
-          <Slider parameter="reso" class="smallknob" caption="Reso" tooltip="Filter resonance."/>
-          <Slider parameter="output" class="smallknob" caption="Output" tooltip="Output level (dB)."/>
-          <View flex-direction="column" border="0" width="64" max-width="64">
-            <Slider parameter="voices" slider-type="inc-dec-buttons" slider-textbox="textbox-below"
-                    caption="Voices" caption-size="11" caption-color="FFA6A0BA" tooltip="Polyphony."/>
-            <ToggleButton parameter="antiAlias" text="AA" tooltip="Mip-mapped anti-aliased oscillator read (cleaner high notes)."/>
-          </View>
+        <View class="fascia" caption="ENVELOPE">
+          <SyncKnob base="attack" caption="Attack" tooltip="Amp attack: free time or beat division."/>
+          <SyncKnob base="decay" caption="Decay" tooltip="Amp decay: free time or beat division."/>
+          <Slider parameter="sustain" class="knobgap" caption="Sustain" tooltip="Sustain level."/>
+          <SyncKnob base="release" caption="Release" tooltip="Amp release: free time or beat division."/>
+        </View>
+
+        <!-- no chip line in this row, so it is 18px shorter than the rows above -->
+        <View class="fascia" caption="TONE" flex-grow="0.86">
+          <Slider parameter="cutoffHz" caption="Cutoff" tooltip="Output low-pass cutoff (Hz)."/>
+          <Slider parameter="reso" caption="Reso" tooltip="Filter resonance."/>
+          <Slider parameter="output" caption="Output" tooltip="Output level (dB)."/>
         </View>
       </View>
 
       <!-- fascia column B: LFO A / LFO B / mod depths -->
-      <View width="285" max-width="285" flex-direction="column" border="0" margin="0" padding="0">
-        <View class="fascia" caption="LFO A" flex-direction="column" flex-grow="1">
-          <View class="chipRow" flex-grow="1.5">
+      <View width="288" max-width="288" flex-direction="column">
+        <View class="fascia" caption="LFO A">
+          <View class="stack" flex-grow="1.2">
             <ComboBox parameter="lfoAShape" caption="Shape" tooltip="LFO A waveform."/>
-            <Slider parameter="lfoARateMs" class="smallknob" caption="Rate" tooltip="LFO A period (ms, or beat division when synced)."/>
-            <Slider parameter="lfoAPhase" class="smallknob" caption="Phase" tooltip="LFO A phase offset."/>
+            <ComboBox parameter="lfoARetrig" caption="Retrigger" tooltip="Free-running / retrigger on key / transport-locked phase."/>
           </View>
-          <View class="chipRow" max-height="46">
-            <ToggleButton parameter="lfoARateSync" text="BEATS" tooltip="LFO A rate follows host tempo."/>
-            <ComboBox parameter="lfoARateDiv" caption="" tooltip="LFO A beat division."/>
-            <ComboBox parameter="lfoARetrig" caption="" tooltip="Free-running / retrigger on key / transport-locked phase."/>
-            <ToggleButton parameter="lfoABipolar" text="BI" tooltip="Bipolar (±) or unipolar (0..1) output."/>
+          <SyncKnob base="lfoARate" caption="Rate"
+                    tooltip="LFO A period: free time, or a beat division that follows the host tempo."/>
+          <View class="stack">
+            <Slider parameter="lfoAPhase" caption="Phase" tooltip="LFO A phase offset."/>
+            <ToggleButton parameter="lfoABipolar" text="bipolar" class="chip"
+                          tooltip="Bipolar (+/-) or unipolar (0..1) output."/>
           </View>
         </View>
 
-        <View class="fascia" caption="LFO B" flex-direction="column" flex-grow="1">
-          <View class="chipRow" flex-grow="1.5">
+        <View class="fascia" caption="LFO B">
+          <View class="stack" flex-grow="1.2">
             <ComboBox parameter="lfoBShape" caption="Shape" tooltip="LFO B waveform."/>
-            <Slider parameter="lfoBRateMs" class="smallknob" caption="Rate" tooltip="LFO B period (ms, or beat division when synced)."/>
-            <Slider parameter="lfoBPhase" class="smallknob" caption="Phase" tooltip="LFO B phase offset."/>
+            <ComboBox parameter="lfoBRetrig" caption="Retrigger" tooltip="Free-running / retrigger on key / transport-locked phase."/>
           </View>
-          <View class="chipRow" max-height="46">
-            <ToggleButton parameter="lfoBRateSync" text="BEATS" tooltip="LFO B rate follows host tempo."/>
-            <ComboBox parameter="lfoBRateDiv" caption="" tooltip="LFO B beat division."/>
-            <ComboBox parameter="lfoBRetrig" caption="" tooltip="Free-running / retrigger on key / transport-locked phase."/>
-            <ToggleButton parameter="lfoBBipolar" text="BI" tooltip="Bipolar (±) or unipolar (0..1) output."/>
+          <SyncKnob base="lfoBRate" caption="Rate"
+                    tooltip="LFO B period: free time, or a beat division that follows the host tempo."/>
+          <View class="stack">
+            <Slider parameter="lfoBPhase" caption="Phase" tooltip="LFO B phase offset."/>
+            <ToggleButton parameter="lfoBBipolar" text="bipolar" class="chip"
+                          tooltip="Bipolar (+/-) or unipolar (0..1) output."/>
           </View>
         </View>
 
-        <View class="fascia" caption="MOD DEPTH" flex-direction="column" flex-grow="1.4">
-          <View class="chipRow" flex-grow="1">
-            <Slider parameter="hurstModA" class="smallknob" caption="Hurst A" tooltip="LFO A depth on Hurst (±%)."/>
-            <Slider parameter="intermittencyModA" class="smallknob" caption="Intmt A" tooltip="LFO A depth on Intermittency (±%)."/>
-            <Slider parameter="tiltModA" class="smallknob" caption="Tilt A" tooltip="LFO A depth on Tilt (±%)."/>
-            <Slider parameter="densityModA" class="smallknob" caption="Dens A" tooltip="LFO A depth on Density (±%)."/>
-            <Slider parameter="outputModA" class="smallknob" caption="Out A" tooltip="LFO A depth on Output (±%)."/>
+        <!-- rows = LFO source, columns = destination -->
+        <View class="fascia" caption="MOD DEPTH" flex-direction="column" flex-grow="1.25">
+          <View class="row">
+            <Label text="A" class="rowlabel"/>
+            <Slider parameter="hurstModA" caption="Hurst" tooltip="LFO A depth on Hurst (±%)."/>
+            <Slider parameter="intermittencyModA" caption="Intermit" tooltip="LFO A depth on Intermittency (±%)."/>
+            <Slider parameter="tiltModA" caption="Tilt" tooltip="LFO A depth on Tilt (±%)."/>
+            <Slider parameter="densityModA" caption="Density" tooltip="LFO A depth on Density (±%)."/>
+            <Slider parameter="outputModA" caption="Output" tooltip="LFO A depth on Output (±%)."/>
           </View>
-          <View class="chipRow" flex-grow="1">
-            <Slider parameter="hurstModB" class="smallknob" caption="Hurst B" tooltip="LFO B depth on Hurst (±%)."/>
-            <Slider parameter="intermittencyModB" class="smallknob" caption="Intmt B" tooltip="LFO B depth on Intermittency (±%)."/>
-            <Slider parameter="tiltModB" class="smallknob" caption="Tilt B" tooltip="LFO B depth on Tilt (±%)."/>
-            <Slider parameter="densityModB" class="smallknob" caption="Dens B" tooltip="LFO B depth on Density (±%)."/>
-            <Slider parameter="outputModB" class="smallknob" caption="Out B" tooltip="LFO B depth on Output (±%)."/>
+          <View class="row">
+            <Label text="B" class="rowlabel"/>
+            <Slider parameter="hurstModB" caption="Hurst" tooltip="LFO B depth on Hurst (±%)."/>
+            <Slider parameter="intermittencyModB" caption="Intermit" tooltip="LFO B depth on Intermittency (±%)."/>
+            <Slider parameter="tiltModB" caption="Tilt" tooltip="LFO B depth on Tilt (±%)."/>
+            <Slider parameter="densityModB" caption="Density" tooltip="LFO B depth on Density (±%)."/>
+            <Slider parameter="outputModB" caption="Output" tooltip="LFO B depth on Output (±%)."/>
           </View>
         </View>
       </View>
     </View>
 
     <!-- ── on-screen keyboard ──────────────────────────────────────────── -->
-    <KeyboardComponent max-height="58" margin="2" border="0"
+    <KeyboardComponent max-height="58" key-down-color="FFA275F5" mouse-over-color="66A275F5"
                        tooltip="On-screen MIDI keyboard."/>
   </View>
 </magic>

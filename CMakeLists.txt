@@ -17,6 +17,12 @@ else()
     message(FATAL_ERROR "No local JUCE found — set -DJUCE_DIR=/path/to/JUCE")
 endif()
 
+# ---- build switches ---------------------------------------------------------
+# GUI_EDITOR OFF = no foleys WYSIWYG window next to the plugin (builds to hand out).
+# INSTALL_AFTER_BUILD OFF = leave the bundles in the build dir, touch no plugin folder.
+option(WAVETREE_GUI_EDITOR "Open the foleys WYSIWYG editor window with the plugin" ON)
+option(WAVETREE_INSTALL_AFTER_BUILD "Copy the built plugins into ~/Library/Audio/Plug-Ins" ON)
+
 # ---- WaveTree II (v2 identity — v1 bundles must never be overwritten) -------
 juce_add_plugin(WaveTree
     PLUGIN_MANUFACTURER_CODE Wvtr
@@ -26,7 +32,7 @@ juce_add_plugin(WaveTree
     IS_SYNTH                 TRUE
     NEEDS_MIDI_INPUT         TRUE
     IS_MIDI_EFFECT           FALSE
-    COPY_PLUGIN_AFTER_BUILD  TRUE
+    COPY_PLUGIN_AFTER_BUILD  ${WAVETREE_INSTALL_AFTER_BUILD}
     PLUGIN_NAME              "WaveTree II"
     PRODUCT_NAME             "WaveTree II"
     FORMATS                  VST3 Standalone AU)
@@ -51,7 +57,7 @@ else()
 endif()
 juce_add_module("${FOLEYS_DIR}/modules/foleys_gui_magic")
 target_compile_definitions(WaveTree PUBLIC
-    FOLEYS_SHOW_GUI_EDITOR_PALLETTE=1
+    FOLEYS_SHOW_GUI_EDITOR_PALLETTE=$<BOOL:${WAVETREE_GUI_EDITOR}>
     FOLEYS_ENABLE_BINARY_DATA=0
     FOLEYS_ENABLE_OPEN_GL_CONTEXT=0)
 
@@ -70,3 +76,11 @@ target_include_directories(acv2_check PRIVATE Source/common)
 enable_testing()
 add_test(NAME wavetree_dwt_check COMMAND wavetree_check)
 add_test(NAME acv2_shared_check COMMAND acv2_check)
+
+# ---- offline editor screenshot tool (links shared code, builds NO bundle) ----
+# Deliberately NOT a CTest: it spins a real message loop and writes PNGs.
+add_executable(wavetree_shot tools/wavetree_shot.cpp)
+target_link_libraries(wavetree_shot PRIVATE WaveTree)
+target_include_directories(wavetree_shot PRIVATE
+    $<TARGET_PROPERTY:WaveTree,INCLUDE_DIRECTORIES>)
+target_compile_definitions(wavetree_shot PRIVATE JucePlugin_Build_Standalone=0)

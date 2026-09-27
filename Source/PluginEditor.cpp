@@ -408,10 +408,131 @@ void SigilView::paint (juce::Graphics& g)
 }
 
 // =============================================================================
+//  SyncKnob — the three-param tempo-sync convention (<base>Sync / <base>Ms /
+//  <base>Div) as ONE knob: the chip underneath switches between free time and
+//  host-tempo beat divisions, and the knob swaps its attachment to match.
+// =============================================================================
+namespace
+{
+class SyncKnob : public juce::Component,
+                 public juce::SettableTooltipClient,
+                 private juce::AudioProcessorValueTreeState::Listener
+{
+public:
+    static constexpr int kReadoutH = 16;
+    static constexpr int kChipH    = 18;
+
+    SyncKnob (WaveTreeProcessor* p, const juce::String& baseId) : proc (p), base (baseId)
+    {
+        for (auto* s : { &msSlider, &divSlider })
+        {
+            s->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+            s->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 72, kReadoutH);
+        }
+        addAndMakeVisible (msSlider);
+        addChildComponent (divSlider);
+        addAndMakeVisible (chip);
+        chip.setTooltip ("Switch between free time (ms) and host-tempo beat divisions.");
+
+        if (proc == nullptr) return;
+        auto& st = proc->state();
+        for (auto* suffix : { "Sync", "Ms", "Div" })
+            if (st.getParameter (base + suffix) == nullptr) return;
+
+        using APVTS = juce::AudioProcessorValueTreeState;
+        msAtt   = std::make_unique<APVTS::SliderAttachment> (st, base + "Ms",   msSlider);
+        divAtt  = std::make_unique<APVTS::SliderAttachment> (st, base + "Div",  divSlider);
+        chipAtt = std::make_unique<APVTS::ButtonAttachment> (st, base + "Sync", chip);
+        st.addParameterListener (base + "Sync", this);
+        listening = true;
+        showBeats (st.getRawParameterValue (base + "Sync")->load() > 0.5f);
+    }
+
+    ~SyncKnob() override
+    {
+        if (listening) proc->state().removeParameterListener (base + "Sync", this);
+    }
+
+    void setTooltip (const juce::String& tip) override
+    {
+        juce::SettableTooltipClient::setTooltip (tip);
+        msSlider.setTooltip (tip);
+        divSlider.setTooltip (tip);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        auto chipRow = r.removeFromBottom (kChipH);
+        chip.setBounds (chipRow.withSizeKeepingCentre (juce::jmin (52, chipRow.getWidth()), kChipH - 2));
+        msSlider.setBounds (r);
+        divSlider.setBounds (r);
+    }
+
+private:
+    void parameterChanged (const juce::String&, float v) override
+    {
+        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<SyncKnob> (this), v]
+            { if (sp != nullptr) sp->showBeats (v > 0.5f); });
+    }
+
+    void showBeats (bool beats)
+    {
+        msSlider.setVisible (! beats);
+        divSlider.setVisible (beats);
+        chip.setButtonText (beats ? "beat" : "ms");
+    }
+
+    WaveTreeProcessor* proc = nullptr;
+    juce::String base;
+    bool listening = false;
+    juce::Slider msSlider, divSlider;
+    juce::ToggleButton chip { "ms" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> msAtt, divAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chipAtt;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SyncKnob)
+};
+} // namespace
+
+// =============================================================================
 //  GuiItem wrappers + registration
 // =============================================================================
 namespace
 {
+class SyncKnobItem : public foleys::GuiItem
+{
+public:
+    FOLEYS_DECLARE_GUI_FACTORY (SyncKnobItem)
+
+    SyncKnobItem (foleys::MagicGUIBuilder& builder, const juce::ValueTree& node)
+        : foleys::GuiItem (builder, node) { update(); }
+
+    juce::Component* getWrappedComponent() override { return knob.get(); }
+
+    void update() override
+    {
+        const auto base = configNode.getProperty ("base", "attack").toString();
+        if (knob != nullptr && base == currentBase) return;
+
+        currentBase = base;
+        knob = std::make_unique<SyncKnob> (
+            dynamic_cast<WaveTreeProcessor*> (magicBuilder.getMagicState().getProcessor()), base);
+        addAndMakeVisible (*knob);
+        resized();
+    }
+
+    std::vector<foleys::SettableProperty> getSettableProperties() const override
+    {
+        return { { configNode, "base", foleys::SettableProperty::Text, "attack", {} } };
+    }
+
+private:
+    std::unique_ptr<SyncKnob> knob;
+    juce::String currentBase;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SyncKnobItem)
+};
+
 template <typename CompT>
 class WtItem : public foleys::GuiItem
 {
@@ -456,4 +577,5 @@ void registerWaveTreeGuiItems (foleys::MagicGUIBuilder& builder)
     builder.registerFactory ("SeedPanel",  &WtItem<SeedPanel>::factory);
     builder.registerFactory ("PresetBar",  &WtItem<PresetBar>::factory);
     builder.registerFactory ("Sigil",      &SigilItem::factory);
+    builder.registerFactory ("SyncKnob",   &SyncKnobItem::factory);
 }

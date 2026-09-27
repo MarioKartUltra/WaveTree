@@ -15,6 +15,8 @@
 //    DhSpectrum  — D(h) multifractal (Legendre) spectrum of the current tree.
 //    SeedPanel   — seed readout + dice (roll) + lock (freeze the last roll).
 //    PresetBar   — factory + user preset picker, save-as.
+//    SyncKnob    — one knob per tempo-syncable time param, with an ms/beat chip
+//                  (attribute base="attack" binds attackSync/attackMs/attackDiv).
 //    Sigil       — abstract dyadic-tree mark + BETA tag (no title text — the
 //                  stealth-beta rule; identity = accent + sigil only).
 //

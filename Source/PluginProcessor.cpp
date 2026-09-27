@@ -148,7 +148,7 @@ WaveTreeProcessor::WaveTreeProcessor()
     cacheRawPointers();
     magicState.createAndAddObject<foleys::MagicLevelSource> ("output");
     apvts.addParameterListener (pid::mode, this);
-    triggerAsyncUpdate();                        // initial view visibility
+    handleAsyncUpdate();                         // initial view visibility, set before any editor exists
 }
 
 WaveTreeProcessor::~WaveTreeProcessor()
@@ -342,7 +342,7 @@ void WaveTreeProcessor::initialiseBuilder (foleys::MagicGUIBuilder& builder)
 
 juce::ValueTree WaveTreeProcessor::createGuiValueTree()
 {
-    juce::String xml (BinaryData::magic_xml, (size_t) BinaryData::magic_xmlSize);
+    const auto xml = juce::String::fromUTF8 (BinaryData::magic_xml, BinaryData::magic_xmlSize);
     auto tree = juce::ValueTree::fromXml (xml);
     return tree.isValid() ? tree : MagicProcessor::createGuiValueTree();
 }
