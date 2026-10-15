@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 #pragma once
 // acv2/ui/ModRing.h — animated LFO-depth ring around any knob. Header-only.
 //

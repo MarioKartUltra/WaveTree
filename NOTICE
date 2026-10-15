@@ -1,0 +1,32 @@
+WaveTree II
+Copyright (C) 2026 Abraham Joseph Okayli Masaryk <ajokaylimasaryk@uh.edu>
+
+WaveTree II is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version (see LICENSE). It is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+First-party source files carry an SPDX licence line and a copyright line.
+
+
+Third-party software
+--------------------
+
+JUCE 8.0.7 -- Copyright (c) Raw Material Software Limited. Dual-licensed; used
+  here under the GNU AGPLv3 (https://github.com/juce-framework/JUCE/blob/8.0.7/LICENSE.md).
+  Not part of this repository: a local checkout or a fetch at configure time.
+
+foleys_gui_magic -- Copyright (c) 2019-2023 Foleys Finest Audio - Daniel Walz.
+  BSD 3-Clause License. The build uses the author's fork
+  (https://github.com/MarioKartUltra/foleys_gui_magic, branch v2-local-fixes):
+  upstream 1a4ffc3 plus six fixes described in that fork's commit. Not part of
+  this repository: a local checkout or a fetch at configure time.
+
+Source/common/acv2 -- the author's AudioCommonV2
+  (https://github.com/MarioKartUltra/AudioCommonV2), copied in; same licence.
+
+Wavelet filter tables in Source/dsp/Wavelets.h were generated with PyWavelets 1.8
+  (https://github.com/PyWavelets/pywt, MIT License, Copyright (c) 2006-2012 Filip
+  Wasilewski, 2012-2020 The PyWavelets Developers).

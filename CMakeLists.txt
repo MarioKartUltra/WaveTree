@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 cmake_minimum_required(VERSION 3.22)
 project(WaveTree VERSION 2.0.0 LANGUAGES C CXX)
 
@@ -9,13 +11,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
-if(DEFINED JUCE_DIR AND EXISTS "${JUCE_DIR}/CMakeLists.txt")
-    add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE/CMakeLists.txt")
-    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE" "${CMAKE_BINARY_DIR}/JUCE")
-else()
-    message(FATAL_ERROR "No local JUCE found — set -DJUCE_DIR=/path/to/JUCE")
-endif()
+# JUCE and foleys_gui_magic: a local checkout, else fetched (cmake/ThirdParty.cmake)
+include(cmake/ThirdParty.cmake)
 
 # ---- build switches ---------------------------------------------------------
 # GUI_EDITOR OFF = no foleys WYSIWYG window next to the plugin (builds to hand out).
@@ -48,14 +45,6 @@ target_compile_definitions(WaveTree PUBLIC
 juce_add_binary_data(WaveTreeData SOURCES Resources/magic.xml)
 set_target_properties(WaveTreeData PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# ---- foleys_gui_magic (WYSIWYG GUI layer; module only, no example CMake) ----
-if(DEFINED FOLEYS_DIR AND EXISTS "${FOLEYS_DIR}/modules/foleys_gui_magic/foleys_gui_magic.h")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/foleys_gui_magic/modules/foleys_gui_magic/foleys_gui_magic.h")
-    set(FOLEYS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/foleys_gui_magic")
-else()
-    message(FATAL_ERROR "No foleys_gui_magic checkout found — set -DFOLEYS_DIR=...")
-endif()
-juce_add_module("${FOLEYS_DIR}/modules/foleys_gui_magic")
 target_compile_definitions(WaveTree PUBLIC
     FOLEYS_SHOW_GUI_EDITOR_PALLETTE=$<BOOL:${WAVETREE_GUI_EDITOR}>
     FOLEYS_ENABLE_BINARY_DATA=0

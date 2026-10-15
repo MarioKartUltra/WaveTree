@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 // =============================================================================
 //  WaveTree II — WaveletVoice.h
 //  One voice: fill the DWT coefficient tree (CoeffGen) -> apply the TreeEdit

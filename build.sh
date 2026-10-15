@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 # WaveTree II plugin build — pins Apple clang + Xcode SDK, scrubs conda/miniforge
 # env vars that would pollute the JUCE build. Pass extra CMake args through.
 #   ./build.sh              # arm64 dev build

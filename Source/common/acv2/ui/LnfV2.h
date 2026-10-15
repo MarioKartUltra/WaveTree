@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 #pragma once
 // acv2/ui/LnfV2.h — shared v2 LookAndFeel (arc knobs + modulation ring + unit
 // readout + toggle chips + section headers + BETA tag). Header-only.

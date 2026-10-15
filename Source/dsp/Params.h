@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 // =============================================================================
 //  WaveTree II — Params.h   (plain seam between JUCE and the DSP core)
 //  The JUCE layer resolves everything to REAL units before it lands here:

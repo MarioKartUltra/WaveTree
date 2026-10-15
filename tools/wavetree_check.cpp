@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 #include "../Source/dsp/Dwt.h"
 #include "../Source/dsp/Mfa.h"
 #include "../Source/dsp/CoeffGen.h"

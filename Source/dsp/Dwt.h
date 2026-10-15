@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 // =============================================================================
 //  WaveTree — Dwt.h
 //  Periodic, multi-level orthonormal DWT / IDWT over a fixed frame of length

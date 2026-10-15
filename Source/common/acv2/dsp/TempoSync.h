@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 #pragma once
 // acv2/dsp/TempoSync.h — frozen v2 tempo-sync division table + math.
 // Header-only, C++17, std-only. Safe inside JUCE-free DSP cores.

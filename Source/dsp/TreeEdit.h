@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 // =============================================================================
 //  WaveTree II — TreeEdit.h
 //  Shared, lock-free edit overlay for the wavelet coefficient tree: a per-band

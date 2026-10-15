@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 #pragma once
 // acv2/dsp/Units.h — value↔text for v2 parameter readouts.
 // Header-only, C++17, std-only. All v2 sliders MUST display real units — never

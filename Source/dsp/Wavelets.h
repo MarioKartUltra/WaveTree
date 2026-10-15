@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 // =============================================================================
 //  WaveTree — Wavelets.h
 //  Wavelet filter banks: Haar, Daubechies, Symlets, Coiflets (orthonormal) and

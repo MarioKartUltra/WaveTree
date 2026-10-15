@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 // =============================================================================
 //  WaveTree II — offline editor screenshot tool (NOT part of the plugin build).
 //  Links the juce_add_plugin shared-code target, constructs the processor and
@@ -939,9 +941,8 @@ int main (int argc, char** argv)
     if (argc > 1 && juce::String (argv[1]) == "--selftest")
         return runSelfTest();
 
-    const juce::String defaultOut =
-        "/private/tmp/claude-501/-Users-amasaryk-projects/"
-        "fc9277dc-03c0-456c-8d90-535220843ea7/scratchpad/shots/WaveTree";
+    // default output: ./shots under the current directory (pass a path to change it)
+    const juce::String defaultOut = juce::File::getCurrentWorkingDirectory().getChildFile ("shots").getFullPathName();
 
     juce::File outDir (argc > 1 ? juce::String (juce::CharPointer_UTF8 (argv[1])) : defaultOut);
     outDir.createDirectory();

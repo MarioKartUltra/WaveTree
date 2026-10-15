@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 #pragma once
 // acv2/test/WiringTest.h — control wiring self-test for the v2 plugin editors.
 // Header-only, JUCE-side, used by each plugin's offscreen tools/<name>_shot tool

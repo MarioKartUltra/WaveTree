@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Abraham Joseph Okayli Masaryk
 #pragma once
 // acv2/ui/Theme.h — v2 design tokens ("laboratory instrument, not SaaS panel").
 // Plain std-only structs (colours as 0xAARRGGBB) so the tokens are usable from

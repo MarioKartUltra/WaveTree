@@ -1,54 +1,80 @@
-# WaveTree — a DWT-based synthesizer
+# WaveTree II
 
-A synthesizer whose entire premise is the **discrete wavelet transform**. Instead
-of oscillators or Fourier partials, you fill a **wavelet coefficient tree**, run
-the **inverse DWT** to get a periodic "wavelet wavetable", and a resampling
-oscillator plays it at the MIDI pitch (continuous pitch, clean looping). VST3 /
-Standalone / AU, same build pipeline as the other plugins here.
+A synthesizer built on the **discrete wavelet transform**. Instead of oscillators or Fourier
+partials you fill a **wavelet coefficient tree**; the **inverse DWT** turns it into a periodic
+wavetable, and a resampling oscillator plays that at the MIDI pitch. VST3, AU and standalone on
+macOS. Version 2 ("WaveTree II", beta) installs beside version 1 under its own identity.
 
-## The substrate
-A Haar / Daubechies (Db2/Db4/Db6) **orthonormal, perfect-reconstruction** DWT.
-Because the filters are orthonormal, the inverse is the exact adjoint of the
-forward transform — `IDWT(DWT(x)) == x` to ~1e-12 (verified by `ctest`).
+## How it works
 
-## Modes (how the coefficient tree is filled)
-- **Bands** — a wavelet "drawbar/formant": per-octave-scale gains shaped by
-  *Tilt* (spectral slope), *Formant* (which scale is emphasised), *Band Q*.
-- **Cascade** — a multiplicative **multifractal cascade** on the dyadic tree:
-  *Hurst* sets the fBm spectral slope, *Intermittency* the log-normal cascade
-  width (multifractal breadth). This is WTMM-style multifractal analysis run
-  *backwards* into synthesis.
-- **Atoms** — sparse wavelet grains (*Density*), percussive/granular.
+Twelve wavelet families (Haar, Daubechies, Symlets, Coiflets and three biorthogonal pairs), all
+perfect-reconstruction: `IDWT(DWT(x)) == x` to 1e-12, checked by the tests.
 
-*Morph* periodically regenerates the coefficient tree and cross-fades, so Cascade
-textures evolve. *Seed* makes it deterministic and note-varying. Plus ADSR, a
-state-variable low-pass (*Cutoff/Resonance*), output, polyphony, and an on-screen
-keyboard. The editor shows the live wavelet wavetable.
+Three ways to fill the tree:
 
-## Build (Apple Silicon)
-```bash
-./build.sh
+- **Bands**: per-octave gains shaped by Tilt (spectral slope), Formant (which scale is emphasised)
+  and Band Q.
+- **Cascade**: a multiplicative multifractal cascade on the dyadic tree. Hurst sets the fBm slope,
+  Intermittency the log-normal cascade width. The editor shows the resulting singularity spectrum
+  D(h), as a CHORD of the summed moments and as a FIT parabola. This is WTMM-style multifractal
+  analysis run backwards, into synthesis.
+- **Atoms**: sparse wavelet grains, set by Density.
+
+Tilt applies in every mode. The tree can also be painted: drag on a node to set its level on one dB
+scale for the whole tree, or drag out of the home row to paint one node per band. Painted levels
+remember the slope they were painted at and follow Tilt and Hurst afterwards.
+
+Also: Morph (regenerate the tree on an interval and cross-fade), seeds that are fixed, per key or a
+fresh roll each strike, ADSR, a state-variable low-pass, anti-aliased playback, polyphony with
+legato and a constant-time glide, two LFOs with eight shapes and a mod matrix, and every time
+control in milliseconds or in beat divisions that follow the host tempo. The standalone has an
+on-screen keyboard.
+
+Morph regenerates the table on the audio thread. The work is infrequent and bounded, but a very
+short Morph interval at high polyphony can load that thread.
+
+## Install a release (no build needed)
+
+Download `WaveTree-II-2.0.0-macOS.zip` from the [Releases](https://github.com/MarioKartUltra/WaveTree/releases)
+page and unzip it. The bundles are signed ad hoc rather than notarised, so macOS quarantines them
+after the download. Clear that first, then copy them into the user plug-in folders:
+
+```sh
+xattr -dr com.apple.quarantine "WaveTree II.vst3" "WaveTree II.component" "WaveTree II.app"
+cp -R "WaveTree II.vst3"      ~/Library/Audio/Plug-Ins/VST3/
+cp -R "WaveTree II.component" ~/Library/Audio/Plug-Ins/Components/
 ```
-`COPY_PLUGIN_AFTER_BUILD` installs VST3+AU to your user plug-in folders. Ad-hoc
-sign + copy to the system folder for a DAW that scans it:
-```bash
-codesign --force --deep -s - ~/Library/Audio/Plug-Ins/VST3/WaveTree.vst3
-cp -R ~/Library/Audio/Plug-Ins/VST3/WaveTree.vst3 /Library/Audio/Plug-Ins/VST3/
-codesign --force --deep -s - /Library/Audio/Plug-Ins/VST3/WaveTree.vst3
+
+Then rescan in the DAW (Ableton Live: Settings → Plug-Ins → Rescan; Logic and GarageBand pick up
+the AU after a restart). `WaveTree II.app` is the standalone version with an on-screen keyboard. macOS 11 or later,
+Apple Silicon or Intel.
+
+## Build from source (macOS)
+
+Xcode command-line tools and CMake 3.22 or later (`brew install cmake ninja`).
+
+```sh
+git clone https://github.com/MarioKartUltra/WaveTree.git
+cd WaveTree
+./build.sh                 # arm64
+./build.sh --universal     # arm64 + x86_64
 ```
 
-> **JUCE location:** the build resolves JUCE from `external/JUCE` → `~/projects/JUCE`.
-> (macOS TCC protects `~/Downloads`, so the build tooling cannot read a JUCE there.)
+The first configure fetches JUCE 8.0.7 and the patched foleys_gui_magic (network, once). To build
+against checkouts you already have, pass `-DJUCE_DIR=... -DFOLEYS_DIR=...` or symlink them as
+`external/JUCE` and `external/foleys_gui_magic`.
 
-## Test
-```bash
-ctest --test-dir build --output-on-failure    # DWT perfect-reconstruction + render
+Artefacts land in `build/WaveTree_artefacts/Release/`. By default the VST3 and AU are also copied into `~/Library/Audio/Plug-Ins`; pass
+`-DWAVETREE_INSTALL_AFTER_BUILD=OFF` to keep them in the build directory. `-DWAVETREE_GUI_EDITOR=ON`
+opens foleys' WYSIWYG layout editor beside the plugin, for development only.
+
+```sh
+ctest --test-dir build --output-on-failure    # the offline DSP checks
+auval -v aumu Wtr2 Wvtr                      # validate the installed AU
 ```
 
-## Known limitations
-- The wavetable oscillator can alias at very high notes (no mip-mapped tables
-  yet); the low-pass tames it.
-- `Morph`/live coefficient regeneration rebuilds the wavetable on the audio
-  thread (infrequent) — fine for a POC, would move off-thread for production.
-- The CWT scalogram-*vocoder* idea is deliberately out of scope here (it's a
-  *continuous* WT, not the DWT this instrument is built on).
+## Licence
+
+WaveTree II is free software under the GNU Affero General Public License, version 3 or later
+(`LICENSE`). Third-party components and their licences are listed in `NOTICE`; JUCE is used under
+its AGPLv3 option.
