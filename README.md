@@ -35,14 +35,14 @@ short Morph interval at high polyphony can load that thread.
 
 ## Install a release (no build needed)
 
-Download `WaveTree-II-2.0.0-macOS.zip` from the [Releases](https://github.com/MarioKartUltra/WaveTree/releases)
-page and unzip it; that makes a folder `WaveTree-II-2.0.0-macOS`. Copy the two plug-in
+Download `WaveTree-II-2.0.1-macOS.zip` from the [Releases](https://github.com/MarioKartUltra/WaveTree/releases)
+page and unzip it; that makes a folder `WaveTree-II-2.0.1-macOS`. Copy the two plug-in
 bundles into the user plug-in folders, by dragging them in the Finder or with the two `cp` lines.
 Then clear the quarantine flag: the bundles are signed ad hoc rather than notarised, so macOS marks
 them after the download and the DAW will not load them until the mark is gone.
 
 ```sh
-cd ~/Downloads/WaveTree-II-2.0.0-macOS
+cd ~/Downloads/WaveTree-II-2.0.1-macOS
 cp -R "WaveTree II.vst3"      ~/Library/Audio/Plug-Ins/VST3/
 cp -R "WaveTree II.component" ~/Library/Audio/Plug-Ins/Components/
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"WaveTree II.vst3" \
