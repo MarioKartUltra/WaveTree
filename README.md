@@ -36,13 +36,17 @@ short Morph interval at high polyphony can load that thread.
 ## Install a release (no build needed)
 
 Download `WaveTree-II-2.0.0-macOS.zip` from the [Releases](https://github.com/MarioKartUltra/WaveTree/releases)
-page and unzip it. The bundles are signed ad hoc rather than notarised, so macOS quarantines them
-after the download. Clear that first, then copy them into the user plug-in folders:
+page and unzip it; that makes a folder `WaveTree-II-2.0.0-macOS`. Copy the two plug-in
+bundles into the user plug-in folders, by dragging them in the Finder or with the two `cp` lines.
+Then clear the quarantine flag: the bundles are signed ad hoc rather than notarised, so macOS marks
+them after the download and the DAW will not load them until the mark is gone.
 
 ```sh
-xattr -dr com.apple.quarantine "WaveTree II.vst3" "WaveTree II.component" "WaveTree II.app"
+cd ~/Downloads/WaveTree-II-2.0.0-macOS
 cp -R "WaveTree II.vst3"      ~/Library/Audio/Plug-Ins/VST3/
 cp -R "WaveTree II.component" ~/Library/Audio/Plug-Ins/Components/
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"WaveTree II.vst3" \
+                               ~/Library/Audio/Plug-Ins/Components/"WaveTree II.component" "WaveTree II.app"
 ```
 
 Then rescan in the DAW (Ableton Live: Settings → Plug-Ins → Rescan; Logic and GarageBand pick up
