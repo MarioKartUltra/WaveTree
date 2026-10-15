@@ -55,6 +55,10 @@ namespace pid
     inline constexpr auto reso      = "reso";
     inline constexpr auto output    = "output";
     inline constexpr auto voices    = "voices";
+    inline constexpr auto glideSync = "glideSync";
+    inline constexpr auto glideMs   = "glideMs";
+    inline constexpr auto glideDiv  = "glideDiv";
+    inline constexpr auto legato    = "legato";
     // LFO prefixes ("lfoA" / "lfoB" + suffixes Shape, RateSync/RateMs/RateDiv,
     // Phase, Retrig, Bipolar) — built by name in createLayout/paramsFromState.
     // mod-depth params: <dst>ModA / <dst>ModB for dst in
@@ -94,6 +98,12 @@ public:
     void copyWavetable (std::vector<float>& d) const { synth.copyWavetable (d); }
     void copyCoeffMags (std::vector<float>& d) const { synth.copyCoeffMags (d); }
     std::uint32_t coeffStamp() const            { return synth.coeffStamp(); }
+    int copyChordCoeffMags (std::vector<float>& d, std::vector<wavetree::WaveletSynth::VoiceSpectrumInfo>& i) const
+    { return synth.copyChordCoeffMags (d, i); }
+    std::uint64_t chordStamp() const            { return synth.chordStamp(); }
+    wavetree::WaveletSynth::VoiceSpectrumInfo shownVoiceInfo() const { return synth.shownVoiceInfo(); }
+    foleys::MagicProcessorState& magicStateRef() { return magicState; }
+    double treeSlope() const { return wavetree::treeSlope (synth.parameters()); }   // what painted levels follow
     int  activeVoices() const                   { return synth.activeVoices(); }
     std::uint32_t shownSeed() const             { return synth.lastShownSeed(); }
     void rollSeed();                            // dice: random 0..9999 into the seed param
@@ -123,6 +133,7 @@ private:
         PF attackSync, attackMs, attackDiv, decaySync, decayMs, decayDiv;
         PF sustain, releaseSync, releaseMs, releaseDiv;
         PF cutoffHz, reso, output, voices;
+        PF glideSync, glideMs, glideDiv, legato;
         LfoPtrs lfo[2];
         PF mod[5][2];    // [hurst, interm, tilt, density, output] x [A, B]
     };

@@ -63,13 +63,13 @@ public:
     }
     const WaveTreeParams& parameters() const { return params; }
 
+    // The keyboard keeps a stack of held keys (oldest first). A key with no free
+    // voice takes the voice of the OLDEST held key; when the taker is released,
+    // its voice goes back to the most recent held key that lost its voice — no
+    // new key press needed. Legato makes both moves keep envelope and table.
     void noteOn (int note, double vel)
     {
         const int maxV = std::min (std::max (params.numVoices, 1), kMaxVoices);
-        int slot = -1;
-        for (int i = 0; i < maxV; ++i) if (! voices[i].isActive()) { slot = i; break; }
-        if (slot < 0) { for (int i = 0; i < maxV; ++i) if (voices[i].isReleased()) { slot = i; break; } }
-        if (slot < 0) slot = 0;
 
         std::uint64_t s64; std::uint32_t shown;
         if (params.seedMode == SeedModeP::Random)
@@ -79,23 +79,50 @@ public:
         }
         else
         {
-            s64 = params.seedMode == SeedModeP::PerKey
-                    ? acv2::perKeySeed ((std::uint64_t) params.seed, note)
-                    : (std::uint64_t) params.seed;
+            s64 = resolveSeed (note);
             shown = (std::uint32_t) params.seed;
         }
         shownSeed.store (shown, std::memory_order_relaxed);
+        holdKey (note, vel, s64);
 
-        voices[slot].setPitchBend (bend);
-        voices[slot].noteOn (note, vel, params, s64);
-        lastVoice = slot;
+        int slot = -1;
+        for (int i = 0; i < maxV; ++i) if (! voices[(size_t) i].isActive()) { slot = i; break; }
+        if (slot < 0) { for (int i = 0; i < maxV; ++i) if (voices[(size_t) i].isReleased()) { slot = i; break; } }
+        if (slot < 0)
+        {
+            slot = oldestVoice (maxV);
+            if (params.legato)
+            {
+                voices[(size_t) slot].setPitchBend (bend);
+                voices[(size_t) slot].legatoTo (note, params, legatoSeed (voices[(size_t) slot], note));
+                lastVoice = slot; lastHz = WaveletVoice::hzOf (note);
+                return;
+            }
+        }
+
+        // glide starts where the voice is (a retrigger mid-slide stays smooth) or
+        // at the previous key's pitch for a fresh voice
+        const double from = voices[(size_t) slot].isActive() ? voices[(size_t) slot].currentHz() : lastHz;
+        voices[(size_t) slot].setPitchBend (bend);
+        voices[(size_t) slot].noteOn (note, vel, params, s64, from);
+        lastVoice = slot; lastHz = WaveletVoice::hzOf (note);
     }
 
     void noteOff (int note)
-    { for (auto& v : voices) if (v.isActive() && ! v.isReleased() && v.midiNote() == note) v.noteOff(); }
+    {
+        releaseKey (note);
+        for (auto& v : voices)
+            if (v.isActive() && ! v.isReleased() && v.midiNote() == note)
+            {
+                const int back = waitingKey();
+                if (back < 0) { v.noteOff(); continue; }
+                if (params.legato) v.legatoTo (held[(size_t) back].note, params, legatoSeed (v, held[(size_t) back].note));
+                else               v.noteOn (held[(size_t) back].note, held[(size_t) back].vel, params, held[(size_t) back].seed, v.currentHz());
+            }
+    }
 
     void pitchBend (double semis) { bend = semis; for (auto& v : voices) v.setPitchBend (semis); }
-    void panic() { for (auto& v : voices) v.panic(); }
+    void panic() { for (auto& v : voices) v.panic(); numHeld = 0; }
 
     void renderBlock (float* L, float* R, int n)
     {
@@ -130,6 +157,8 @@ public:
     }
 
     int activeVoices() const { int c = 0; for (auto& v : voices) if (v.isActive()) ++c; return c; }
+    int heldKeys() const { return numHeld; }
+    const WaveletVoice& voice (int i) const { return voices[(size_t) i]; }
 
     // ---- UI feeds (message thread; torn reads are display-only) ----
     void copyScope (std::vector<float>& dst) const
@@ -152,6 +181,49 @@ public:
     std::uint32_t coeffStamp() const
     { return voices[(size_t) (lastVoice >= 0 ? lastVoice : 0)].buildStamp(); }
 
+    // ---- the chord: every sounding voice's tree (the last voice when none sounds) ----
+    struct VoiceSpectrumInfo { double hurst = 0.6, intermittency = 0.4; Mode mode = Mode::Cascade; double slope = 1.31; };
+
+    // Flat copy, kFrame magnitudes per voice; returns how many voices.
+    int copyChordCoeffMags (std::vector<float>& dst, std::vector<VoiceSpectrumInfo>& info) const
+    {
+        dst.clear(); info.clear();
+        int n = 0;
+        for (const auto& v : voices)
+            if (v.isActive())
+            {
+                dst.insert (dst.end(), v.coeffMags(), v.coeffMags() + WaveletVoice::kFrame);
+                info.push_back ({ v.generatedHurst(), v.generatedIntermittency(), v.generatedMode(), v.generatedSlope() });
+                ++n;
+            }
+        if (n == 0)
+        {
+            const auto& v = voices[(size_t) (lastVoice >= 0 ? lastVoice : 0)];
+            dst.insert (dst.end(), v.coeffMags(), v.coeffMags() + WaveletVoice::kFrame);
+            info.push_back ({ v.generatedHurst(), v.generatedIntermittency(), v.generatedMode(), v.generatedSlope() });
+            n = 1;
+        }
+        return n;
+    }
+
+    // Changes whenever a voice starts, stops or rebuilds its tree.
+    std::uint64_t chordStamp() const
+    {
+        std::uint64_t h = 1469598103934665603ull;
+        for (size_t i = 0; i < voices.size(); ++i)
+        {
+            const std::uint64_t x = voices[i].isActive() ? (0x100000000ull | voices[i].buildStamp()) : 0ull;
+            h ^= x + i; h *= 1099511628211ull;
+        }
+        return h;
+    }
+
+    VoiceSpectrumInfo shownVoiceInfo() const
+    {
+        const auto& v = voices[(size_t) (lastVoice >= 0 ? lastVoice : 0)];
+        return { v.generatedHurst(), v.generatedIntermittency(), v.generatedMode(), v.generatedSlope() };
+    }
+
     std::uint32_t lastShownSeed() const { return shownSeed.load (std::memory_order_relaxed); }
 
     TreeEdit&       treeEdit()       { return tree; }
@@ -168,14 +240,65 @@ private:
                  : (std::uint64_t) params.seed;
     }
 
+    // a legato move keeps the voice's table unless the key defines it (Per-Key)
+    std::uint64_t legatoSeed (const WaveletVoice& v, int note) const
+    { return params.seedMode == SeedModeP::PerKey ? resolveSeed (note) : v.currentSeed(); }
+
+    // ---- the held-key stack ----
+    static constexpr int kMaxHeld = 32;
+    struct HeldKey { int note = 0; double vel = 1.0; std::uint64_t seed = 1; };
+
+    void holdKey (int note, double vel, std::uint64_t seed)
+    {
+        releaseKey (note);                                        // re-pressed while held: moves to the top
+        if (numHeld == kMaxHeld) { std::memmove (held.data(), held.data() + 1, sizeof (HeldKey) * (kMaxHeld - 1)); --numHeld; }
+        held[(size_t) numHeld++] = { note, vel, seed };
+    }
+
+    void releaseKey (int note)
+    {
+        for (int i = 0; i < numHeld; ++i)
+            if (held[(size_t) i].note == note)
+            {
+                std::memmove (held.data() + i, held.data() + i + 1, sizeof (HeldKey) * (size_t) (numHeld - i - 1));
+                --numHeld; --i;
+            }
+    }
+
+    bool sounding (int note) const
+    {
+        for (const auto& v : voices) if (v.isActive() && ! v.isReleased() && v.midiNote() == note) return true;
+        return false;
+    }
+
+    // the voice of the key pressed earliest (all voices busy and not released)
+    int oldestVoice (int maxV) const
+    {
+        for (int k = 0; k < numHeld; ++k)
+            for (int i = 0; i < maxV; ++i)
+                if (voices[(size_t) i].isActive() && ! voices[(size_t) i].isReleased()
+                    && voices[(size_t) i].midiNote() == held[(size_t) k].note) return i;
+        return 0;
+    }
+
+    // the most recent held key with no voice of its own (-1: none waiting)
+    int waitingKey() const
+    {
+        for (int k = numHeld - 1; k >= 0; --k)
+            if (! sounding (held[(size_t) k].note)) return k;
+        return -1;
+    }
+
     double sr = 48000.0;
     WaveTreeParams params;
     std::array<WaveletVoice, kMaxVoices> voices;
     TreeEdit tree;
     acv2::SeedPolicy policy;
     std::atomic<std::uint32_t> shownSeed { 1 };
-    double bend = 0.0;
+    double bend = 0.0, lastHz = 0.0;
     int lastVoice = -1;
+    std::array<HeldKey, kMaxHeld> held {};
+    int numHeld = 0;
     int regenCursor = 0;
     std::uint32_t lastTreeVersion = 0;
     static constexpr int scopeSize = 4096;

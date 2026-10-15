@@ -9,9 +9,12 @@
 //  A node is edited one of two ways:
 //    - a painted LEVEL, which sets the coefficient's magnitude outright, so a
 //      coefficient the generator left at or near zero can be painted in. The
-//      level is a height in a row, 0..1, on a decibel scale tied to the
-//      largest generated magnitude in the tree (the "tree peak"): the top of
-//      the row is kTopDb above the peak, the bottom kRangeDb below the top.
+//      level is a height in a row, 0..1, on ONE decibel scale for the whole
+//      tree, tied to the largest generated magnitude (the "tree peak"): the top
+//      of a row is kTopDb above the peak, the bottom kRangeDb below the top.
+//      What is drawn is what is heard. The node also keeps the tree's slope at
+//      the moment it was painted, so when Tilt / Hurst / mode change the slope
+//      it moves with the tree's own decay at its scale (paintedMagnitude).
 //    - a GAIN in [0, kMaxGain], a plain multiplier (1 = off). This is what
 //      painting wrote before levels existed; projects saved then still load.
 //  JUCE-free, header-only, std-only.
@@ -39,6 +42,7 @@ struct TreeEdit
 
     std::array<std::atomic<float>, kMaxNodes> nodeGain;
     std::array<std::atomic<float>, kMaxNodes> nodeLevel;
+    std::array<std::atomic<float>, kMaxNodes> nodeSlope;   // the tree's slope when the node was painted
     std::array<std::atomic<float>, kMaxBands> bandGain;
     std::atomic<std::uint32_t>                version { 0 };
 
@@ -48,6 +52,7 @@ struct TreeEdit
     {
         for (auto& g : nodeGain)  g.store (1.0f, std::memory_order_relaxed);
         for (auto& l : nodeLevel) l.store (kUnset, std::memory_order_relaxed);
+        for (auto& s : nodeSlope) s.store (0.0f, std::memory_order_relaxed);
         for (auto& g : bandGain)  g.store (1.0f, std::memory_order_relaxed);
         bump();
     }
@@ -72,14 +77,19 @@ struct TreeEdit
     float getBandGain (int b) const
     { return (b >= 0 && b < kMaxBands) ? bandGain[(size_t) b].load (std::memory_order_relaxed) : 1.0f; }
 
-    // Paint a node: its magnitude becomes this height on the row's scale.
-    void setNodeLevel (int i, float level01)
+    // Paint a node: its magnitude becomes this height on the tree's scale, at
+    // the tree slope `paintSlope` (what treeSlope() was when it was painted).
+    void setNodeLevel (int i, float level01, float paintSlope)
     {
         if (i < 0 || i >= kMaxNodes) return;
         nodeLevel[(size_t) i].store (level01 < 0.0f ? 0.0f : (level01 > 1.0f ? 1.0f : level01),
                                      std::memory_order_relaxed);
+        nodeSlope[(size_t) i].store (paintSlope, std::memory_order_relaxed);
         nodeGain[(size_t) i].store (1.0f, std::memory_order_relaxed);
     }
+
+    float getNodeSlope (int i) const
+    { return (i >= 0 && i < kMaxNodes) ? nodeSlope[(size_t) i].load (std::memory_order_relaxed) : 0.0f; }
 
     // Erase a node's edits: back to what the generator made.
     void clearNode (int i)
@@ -126,26 +136,52 @@ inline double treePeakOf (const double* coeffs, int n)
     return pk;
 }
 
-// The edited tree: out = band gain x (painted magnitude with the generator's
-// sign, or generated value x node gain). The scale of painted levels is the
-// peak of the GENERATED coefficients, so painting never moves it. Audio-thread
-// safe: relaxed atomic loads, no allocation.
-template <typename BandOff, typename BandSize>
-inline void applyTreeEdit (const TreeEdit& t, const double* in, double* out, int numBands,
-                           BandOff bandOff, BandSize bandSize)
+// The tree's own decay at band b: the peak of the GENERATED coefficients in the
+// band that holds it, and from there an octave per unit of `slope` down per
+// finer band (up per coarser one).
+inline double bandReference (double peak, int peakBand, int band, double slope)
 {
-    double peak = 0.0;
+    return peak * std::pow (2.0, -(double) (band - peakBand) * slope);
+}
+
+// A painted node: its level on the whole-tree scale, moved by however much the
+// tree's decay at its band has changed since it was painted (none while the
+// slope is where it was, so the drawn height is exactly what is heard).
+inline double paintedMagnitude (float level, float paintSlope, double peak, int peakBand, int band, double slope)
+{
+    return TreeEdit::levelToMagnitude ((double) level, peak)
+         * bandReference (1.0, peakBand, band, slope) / bandReference (1.0, peakBand, band, (double) paintSlope);
+}
+
+template <typename BandOff, typename BandSize>
+inline int peakBandOf (const double* in, int numBands, BandOff bandOff, BandSize bandSize, double& peakOut)
+{
+    double peak = 0.0; int peakBand = 0;
     for (int b = 0; b < numBands; ++b)
     {
         const int off = bandOff (b), n = bandSize (b);
-        for (int k = 0; k < n; ++k) peak = std::fmax (peak, std::fabs (in[off + k]));
+        for (int k = 0; k < n; ++k)
+            if (std::fabs (in[off + k]) > peak) { peak = std::fabs (in[off + k]); peakBand = b; }
     }
-    if (peak <= 0.0) peak = 1.0;
+    peakOut = peak <= 0.0 ? 1.0 : peak;
+    return peakBand;
+}
+
+// The edited tree: out = band gain x (painted magnitude with the generator's
+// sign, or generated value x node gain). Painting never moves the scale: it is
+// the generated peak. `slope` is the tree's slope now (treeSlope). Audio-thread
+// safe: relaxed atomic loads, no allocation.
+template <typename BandOff, typename BandSize>
+inline void applyTreeEdit (const TreeEdit& t, const double* in, double* out, int numBands,
+                           BandOff bandOff, BandSize bandSize, double slope = 0.0)
+{
+    double peak = 1.0;
+    const int peakBand = peakBandOf (in, numBands, bandOff, bandSize, peak);
 
     for (int b = 0; b < numBands; ++b)
     {
         const int off = bandOff (b), n = bandSize (b);
-        const double bg = (double) t.getBandGain (b);
+        const double bg  = (double) t.getBandGain (b);
         for (int k = 0; k < n; ++k)
         {
             const double c     = in[off + k];
@@ -154,7 +190,7 @@ inline void applyTreeEdit (const TreeEdit& t, const double* in, double* out, int
             {
                 // a node the generator left at zero has no sign: alternate, as the Bands mode does
                 const double sign = c < 0.0 ? -1.0 : (c > 0.0 ? 1.0 : ((k & 1) ? -1.0 : 1.0));
-                out[off + k] = sign * TreeEdit::levelToMagnitude ((double) level, peak) * bg;
+                out[off + k] = sign * paintedMagnitude (level, t.getNodeSlope (off + k), peak, peakBand, b, slope) * bg;
             }
             else
                 out[off + k] = c * bg * (double) t.getNodeGain (off + k);

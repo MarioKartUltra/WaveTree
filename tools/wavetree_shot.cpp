@@ -300,6 +300,19 @@ static int testTreePainting()
     auto& tree = proc.treeEdit();
     auto index = [&] (int k) { return CoeffTreeView::bandOff (band) + k; };
 
+    // 0. the picture keeps the tree's decay: one scale for the whole tree, so the
+    // fine rows are drawn lower than the coarse ones (Atoms: 0.7 octave per band,
+    // seven bands = 29 dB = about half a row)
+    auto tallest = [&] (int bnd)
+    {
+        float m = 0.0f;
+        for (int k = 0; k < CoeffTreeView::bandSize (bnd); ++k) m = std::max (m, view->shownLevel (bnd, k));
+        return m;
+    };
+    expect (tallest (9) < tallest (2) - 0.3f,
+            "fine rows are drawn lower than coarse rows (d9 " + juce::String (tallest (9), 2)
+            + ", d2 " + juce::String (tallest (2), 2) + ")");
+
     const auto src = juce::Desktop::getInstance().getMainMouseSource();
     auto event = [&] (juce::Point<float> at, juce::Point<float> from, bool right, bool dragged)
     {
@@ -342,11 +355,28 @@ static int testTreePainting()
         change = std::max (change, std::abs (after[i] - before[i]));
     expect (change > 0.01f, "painting a node that was at zero changes the sound");
 
-    // 2. a drag stays in the row it started in: going past the top is the top
+    // 1b. the slope knobs move a painted bar with the tree: steeper tilt, a fine node goes down
+    {
+        const float drawn = view->shownLevel (band, a);
+        setP (proc.state(), "tilt", 1.0f);                     // 1.1 octave per band steeper
+        blocks (12);
+        pump (0.3);
+        const float steeper = view->shownLevel (band, a);
+        expect (std::abs (tree.getNodeLevel (index (a)) - 0.75f) < 0.03f, "turning tilt keeps the painted level itself");
+        expect (steeper < drawn - 0.2f, "a steeper tilt lowers a painted fine node with the tree ("
+                                        + juce::String (drawn, 2) + " -> " + juce::String (steeper, 2) + ")");
+        setP (proc.state(), "tilt", 0.5f);
+        blocks (12);
+        pump (0.3);
+        expect (std::abs (view->shownLevel (band, a) - drawn) < 0.03f, "tilt back: the bar is where it was painted");
+    }
+
+    // 2. a small overshoot stays in the row: just past the top is the top
     const int b2 = silent[1];
-    const auto above = view->nodeArea (band, b2).getY() - 60.0f;
+    const float rowH = view->nodeArea (band, b2).getHeight();
+    const auto above = view->nodeArea (band, b2).getY() - 0.25f * rowH;
     drag (pointAt (b2, 0.4f), { view->nodeArea (band, b2).getCentreX(), above });
-    expect (tree.getNodeLevel (index (b2)) > 0.99f, "dragging above the row paints the top of that row");
+    expect (tree.getNodeLevel (index (b2)) > 0.99f, "dragging a little above the row paints the top of that row");
     bool neighboursUntouched = true;
     for (int nb = band + 1; nb <= band + 3 && nb < CoeffTreeView::kBands; ++nb)
         for (int k = 0; k < CoeffTreeView::bandSize (nb); ++k)
@@ -355,12 +385,145 @@ static int testTreePainting()
                 neighboursUntouched = false;
     expect (neighboursUntouched, "and leaves the rows above alone");
 
-    // 3. past the bottom mutes
+    // 3. a little past the bottom mutes
     const int c = silent[2];
-    const auto below = view->nodeArea (band, c).getBottom() + 60.0f;
+    const auto below = view->nodeArea (band, c).getBottom() + 0.25f * rowH;
     drag (pointAt (c, 0.5f), { view->nodeArea (band, c).getCentreX(), below });
     expect (tree.getNodeLevel (index (c)) >= 0.0f && tree.getNodeLevel (index (c)) < 0.01f,
-            "dragging below the row paints the bottom: muted");
+            "dragging a little below the row paints the bottom: muted");
+
+    // 3b. a drag UP into finer rows traces a bone: one node per finer row, each the child of
+    // the one below nearest the pointer; every row holds only that node until the button is
+    // let go, and that node's level follows the pointer's height while the pointer is in its row
+    {
+        const int top = std::min (CoeffTreeView::kBands - 1, band + 3);
+        auto clearAbove = [&]
+        {
+            for (int nb = band + 1; nb < CoeffTreeView::kBands; ++nb)
+                for (int k = 0; k < CoeffTreeView::bandSize (nb); ++k) tree.clearNode (CoeffTreeView::bandOff (nb) + k);
+            tree.bump();
+        };
+        // which node a row holds (-1 none, -2 more than one)
+        auto heldIn = [&] (int nb)
+        {
+            int at = -1;
+            for (int k = 0; k < CoeffTreeView::bandSize (nb); ++k)
+                if (tree.getNodeLevel (CoeffTreeView::bandOff (nb) + k) >= 0.0f) at = (at == -1 ? k : -2);
+            return at;
+        };
+        auto levelOf = [&] (int nb, int k) { return k < 0 ? -1.0f : tree.getNodeLevel (CoeffTreeView::bandOff (nb) + k); };
+        auto childNearest = [&] (int nb, int parent, float px)
+        {
+            const int n = CoeffTreeView::bandSize (nb), r = n / CoeffTreeView::bandSize (nb - 1);
+            const auto g = view->gridArea (nb);
+            const int under = (int) std::floor ((px - g.getX()) / g.getWidth() * (float) n);
+            return juce::jlimit (parent * r, parent * r + r - 1, under);
+        };
+        auto heightIn = [&] (int nb, float y) { const auto g = view->gridArea (nb); return (g.getBottom() - y) / g.getHeight(); };
+
+        // (i) the user's gesture: drag the start node to the top of its row, cross into the next
+        // row, then wander sideways there, then climb on and wander in the last row
+        const int start = silent[0];
+        const auto cell = view->nodeArea (band, start);
+        const juce::Point<float> from { cell.getCentreX(), cell.getBottom() - 0.3f * cell.getHeight() };
+        const float farRight = view->gridArea (band).getRight() - 2.0f;
+        const float step = 0.1f * cell.getHeight();
+        const float y1 = view->rowArea (band + 1).getY() + 0.3f * view->rowArea (band + 1).getHeight();   // 70 % up row +1
+        view->mouseDown (event (from, from, false, false));
+        for (float y = from.y; y > y1; y -= step) view->mouseDrag (event ({ from.x, y }, from, false, true));
+        view->mouseDrag (event ({ from.x, y1 }, from, false, true));
+        for (float px = from.x; px <= farRight; px += 3.0f)                    // sideways in a claimed row
+            view->mouseDrag (event ({ px, y1 }, from, false, true));
+        const float startAfterCrossing = levelOf (band, start);
+        const float nextAfterWander = levelOf (band + 1, heldIn (band + 1));
+        const float yTop = view->rowArea (top).getCentreY();
+        for (float y = y1; y > yTop; y -= step) view->mouseDrag (event ({ farRight, y }, from, false, true));
+        for (float px = farRight; px >= view->gridArea (top).getX(); px -= 3.0f)   // sideways in the last one
+            view->mouseDrag (event ({ px, yTop }, from, false, true));
+        view->mouseUp (event (from, from, false, true));
+
+        bool onePerRow = true, branch = true;
+        int parent = start;
+        for (int nb = band + 1; nb <= top; ++nb)
+        {
+            const int at = heldIn (nb);
+            onePerRow = onePerRow && at >= 0;
+            branch = branch && at == childNearest (nb, parent, nb == band + 1 ? from.x : farRight);
+            parent = at < 0 ? 0 : at;
+        }
+        expect (onePerRow, "a bone paints exactly one node per finer row, however the pointer wanders");
+        expect (branch, "each is the child of the one below nearest the pointer: the stroke follows a branch");
+        expect (startAfterCrossing > 0.97f && levelOf (band, start) > 0.97f,
+                "the start node dragged to the top of its row stays at the top when the stroke crosses on ("
+                    + juce::String (startAfterCrossing, 2) + ")");
+        expect (std::abs (nextAfterWander - heightIn (band + 1, y1)) < 0.03f,
+                "the next row's node is at the pointer's height in that row, not collapsed ("
+                    + juce::String (nextAfterWander, 2) + ")");
+        expect (levelOf (band + 1, heldIn (band + 1)) > 0.85f && levelOf (band + 2, heldIn (band + 2)) > 0.85f,
+                "rows climbed all the way through end at their top");
+        expect (std::abs (levelOf (top, heldIn (top)) - heightIn (top, yTop)) < 0.03f, "the last row's node is where the pointer stopped");
+
+        // (ii) back down into a row the bone already holds: the SAME node takes the new height
+        {
+            const int held = heldIn (band + 1);
+            const juce::Point<float> f2 = from;
+            view->mouseDown (event (f2, f2, false, false));
+            for (float y = f2.y; y > yTop; y -= step) view->mouseDrag (event ({ f2.x, y }, f2, false, true));
+            const float yLow = view->rowArea (band + 1).getBottom() - 0.2f * view->rowArea (band + 1).getHeight();
+            for (float y = yTop; y < yLow; y += step) view->mouseDrag (event ({ farRight, y }, f2, false, true));
+            view->mouseDrag (event ({ farRight, yLow }, f2, false, true));
+            view->mouseUp (event (f2, f2, false, true));
+            expect (heldIn (band + 1) == childNearest (band + 1, start, f2.x) && held >= 0,
+                    "coming back down, the row still holds only its one node");
+            expect (std::abs (levelOf (band + 1, heldIn (band + 1)) - heightIn (band + 1, yLow)) < 0.03f,
+                    "and that node follows the pointer down");
+        }
+        clearAbove();
+
+        // (iii) a jump over rows in one mouse event: an unbroken branch, the skipped rows at the level below them
+        view->mouseDown (event (from, from, false, false));
+        view->mouseDrag (event ({ from.x, yTop }, from, false, true));
+        view->mouseUp (event (from, from, false, true));
+        bool unbroken = true, carried = true;
+        parent = start;
+        for (int nb = band + 1; nb <= top; ++nb)
+        {
+            const int at = heldIn (nb);
+            unbroken = unbroken && at == childNearest (nb, parent, from.x);
+            if (nb < top) carried = carried && std::abs (levelOf (nb, at) - levelOf (band, start)) < 0.03f;
+            parent = at < 0 ? 0 : at;
+        }
+        expect (unbroken, "a fast drag that skips rows still paints one node in each, along the branch");
+        expect (carried, "the skipped rows take the level of the node below them");
+        clearAbove();
+    }
+
+    // 3c. a drag DOWN never leaves the row it started in: past the bottom of the view it mutes
+    {
+        const int fine = band + 2, n = CoeffTreeView::bandSize (fine), off = CoeffTreeView::bandOff (fine);
+        auto paintedBelow = [&]
+        {
+            int c = 0;
+            for (int i = 0; i < CoeffTreeView::bandOff (fine); ++i) if (tree.getNodeLevel (i) >= 0.0f) ++c;
+            return c;
+        };
+        const int before = paintedBelow();
+        const int k0 = n / 4, k1 = k0 + 6;
+        const auto c0 = view->nodeArea (fine, k0), c1 = view->nodeArea (fine, k1);
+        const juce::Point<float> from { c0.getCentreX(), c0.getBottom() - 0.5f * c0.getHeight() };
+        const float floorY = (float) view->getHeight() + 40.0f;
+        view->mouseDown (event (from, from, false, false));
+        for (float y = from.y; y < floorY; y += 6.0f) view->mouseDrag (event ({ from.x, y }, from, false, true));
+        for (float px = from.x; px <= c1.getCentreX(); px += 2.0f) view->mouseDrag (event ({ px, floorY }, from, false, true));
+        view->mouseUp (event (from, from, false, true));
+        bool muted = true;
+        for (int k = k0; k <= k1; ++k)
+            muted = muted && tree.getNodeLevel (off + k) >= 0.0f && tree.getNodeLevel (off + k) < 0.01f;
+        expect (muted, "a drag from a fine row to below the view mutes every node of that row it sweeps");
+        expect (paintedBelow() == before, "and paints nothing in the coarser rows it passed over");
+        for (int k = 0; k < n; ++k) tree.clearNode (off + k);
+        tree.bump();
+    }
 
     // 4. a drag across the row paints every node it passes
     drag (pointAt (silent[0], 0.6f), pointAt (silent[2], 0.6f));
@@ -405,6 +568,23 @@ static int testTreePainting()
             all = all && ((was < 0.0f && is < 0.0f) || std::abs (was - is) < 0.002f);
         }
         expect (all && painted >= 3, "and so does every other one");
+        expect (std::abs (other.treeEdit().getNodeSlope (index (a)) - tree.getNodeSlope (index (a))) < 0.002f,
+                "and the slope it was painted at");
+    }
+
+    // 7b. a level saved before paint slopes existed loads at the slope the project opens with
+    {
+        WaveTreeProcessor old;
+        old.magicStateRef().getPropertyRoot().setProperty ("treeGains", "L,100,0.500;", nullptr);
+        juce::MemoryBlock oldState;
+        old.getStateInformation (oldState);
+        WaveTreeProcessor other;
+        other.setStateInformation (oldState.getData(), (int) oldState.getSize());
+        pump (0.2);
+        expect (std::abs (other.treeEdit().getNodeLevel (100) - 0.5f) < 0.002f
+                    && std::abs (other.treeEdit().getNodeSlope (100) - (float) wavetree::cascadeSlope (0.6)) < 0.002f,
+                "an older painted level keeps its height and takes the project's slope ("
+                    + juce::String (other.treeEdit().getNodeSlope (100), 3) + ")");
     }
 
     // 8. gains written by the version before still load as gains
@@ -428,9 +608,193 @@ static int testTreePainting()
     return failures;
 }
 
+
+static DhSpectrumView* findDh (juce::Component& c)
+{
+    if (auto* t = dynamic_cast<DhSpectrumView*> (&c)) return t;
+    for (int i = 0; i < c.getNumChildComponents(); ++i)
+        if (auto* t = findDh (*c.getChildComponent (i))) return t;
+    return nullptr;
+}
+
+// The D(h) view: KEY shows the last key, CHORD every sounding voice, FIT the analytic parabola.
+static int testChordSpectrum()
+{
+    int failures = 0;
+    auto expect = [&] (bool ok, const juce::String& what)
+    {
+        if (ok) return;
+        ++failures;
+        std::printf ("  FAIL %s\n", what.toRawUTF8());
+    };
+    std::printf ("  [chord spectrum]\n");
+
+    WaveTreeProcessor proc;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    setP (proc.state(), "mode", 1.0f);                         // Cascade: the analytic form exists
+    std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+    ed->setVisible (true);
+    pump (0.5);
+    auto* view = findDh (*ed);
+    expect (view != nullptr, "the D(h) view is in the editor");
+    if (view == nullptr) return failures;
+    expect (! view->chordMode() && ! view->analyticShown(), "KEY and no FIT by default");
+
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    auto blocks = [&] (int n) { for (int i = 0; i < n; ++i) { proc.processBlock (buf, midi); midi.clear(); } };
+    midi.addEvent (juce::MidiMessage::noteOn (1, 48, 0.9f), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 55, 0.9f), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 64, 0.9f), 0);
+    blocks (8);
+    pump (0.4);
+    expect (view->result().valid && view->voicesQuantified() == 1, "KEY: one tree quantified");
+    const auto key = view->result();
+
+    view->setChordMode (true);
+    pump (0.4);
+    expect (view->chordMode(), "CHORD chosen");
+    expect (proc.magicStateRef().getPropertyAsValue (DhSpectrumView::kChordProp).getValue().toString() == "1",
+            "the choice is a state property");
+    expect (view->voicesQuantified() == 3, "CHORD: three sounding voices quantified (" + juce::String (view->voicesQuantified()) + ")");
+    expect (view->result().valid, "the chord spectrum is valid");
+    // equal parameters per key: the chord's arch sits where the single key's does (same generator, other seeds)
+    expect (std::abs (view->result().hPeak - key.hPeak) < 0.35,
+            "voices with equal Hurst/Intermittency give the same arch: h* " + juce::String (view->result().hPeak, 2)
+            + " vs " + juce::String (key.hPeak, 2));
+
+    // FIT draws the parabola: more lit pixels in the plot once it is on
+    auto lit = [&]
+    {
+        const auto img = view->createComponentSnapshot (view->getLocalBounds(), true, 1.0f);
+        int n = 0;
+        for (int y = 20; y < img.getHeight() - 12; ++y)
+            for (int x = 16; x < img.getWidth(); ++x)
+                if (img.getPixelAt (x, y).getBrightness() > 0.45f) ++n;
+        return n;
+    };
+    const int before = lit();
+    view->setAnalyticShown (true);
+    pump (0.3);
+    expect (view->analyticShown(), "FIT chosen");
+    const int after = lit();
+    expect (after > before + 40, "the dashed parabola adds to the picture (" + juce::String (before) + " -> " + juce::String (after) + ")");
+
+    // FIT follows everything that sets the Cascade slope, Tilt included: at tilt 100 % the
+    // measured arch moves 1.1 to the right and the parabola must move with it
+    view->setChordMode (false);
+    for (float tilt : { 0.5f, 1.0f, 0.2f })
+    {
+        setP (proc.state(), "tilt", tilt);
+        blocks (16);
+        pump (0.4);
+        expect (std::abs (view->fitCentre() - view->result().hPeak) < 0.35,
+                "tilt " + juce::String (tilt, 1) + ": FIT is centred on the measured arch (FIT "
+                    + juce::String (view->fitCentre(), 2) + ", h* " + juce::String (view->result().hPeak, 2) + ")");
+    }
+    setP (proc.state(), "tilt", 0.5f);
+    blocks (16);
+
+    midi.addEvent (juce::MidiMessage::noteOff (1, 48), 0);
+    midi.addEvent (juce::MidiMessage::noteOff (1, 55), 0);
+    blocks (4);
+    view->setChordMode (false);
+    view->setAnalyticShown (false);
+    pump (0.2);
+    return failures;
+}
+
+static SyncKnob* findSyncKnob (juce::Component& c, const juce::String& base)
+{
+    if (auto* k = dynamic_cast<SyncKnob*> (&c)) if (k->baseId() == base) return k;
+    for (int i = 0; i < c.getNumChildComponents(); ++i)
+        if (auto* k = findSyncKnob (*c.getChildComponent (i), base)) return k;
+    return nullptr;
+}
+
+// In beats the knob walks ONE family of divisions, shortest first — turning it
+// up from 1/16 reaches 1/8, never 1/8T or 1/16. (the parameter's table order
+// interleaves the three families, which is what the user heard as "multiples
+// of 2 trigger triplets")
+static int testBeatFamilies()
+{
+    int failures = 0;
+    auto expect = [&] (bool ok, const juce::String& what)
+    {
+        if (ok) return;
+        ++failures;
+        std::printf ("  FAIL %s\n", what.toRawUTF8());
+    };
+    std::printf ("  [beat families]\n");
+    using namespace acv2::tempo;
+
+    WaveTreeProcessor proc;
+    proc.setRateAndBufferSizeDetails (48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+    ed->setVisible (true);
+    pump (0.4);
+    auto* knob = findSyncKnob (*ed, "lfoARate");
+    expect (knob != nullptr, "the LFO A rate knob is a SyncKnob");
+    if (knob == nullptr) return failures;
+
+    setP (proc.state(), "lfoARateSync", 1.0f);
+    pump (0.2);
+    expect (knob->beatKnob().isVisible(), "beats shows the division knob");
+    auto divNow = [&] { return (int) proc.state().getRawParameterValue ("lfoARateDiv")->load(); };
+
+    const Family families[] = { Family::Straight, Family::Triplet, Family::Dotted, Family::All };
+    for (auto f : families)
+    {
+        knob->setFamily ((int) f);
+        pump (0.05);
+        int order[64];
+        const int n = familyOrder (f, order, 64);
+        expect (juce::roundToInt (knob->beatKnob().getMaximum()) == n - 1,
+                juce::String (familyName (f)) + ": the knob has one step per member (" + juce::String (n) + ")");
+        bool onlyFamily = true, ordered = true;
+        double last = -1.0;
+        for (int k = 0; k < n; ++k)
+        {
+            knob->beatKnob().setValue ((double) k, juce::sendNotificationSync);
+            pump (0.02);
+            const int d = divNow();
+            if (! inFamily (d, f)) onlyFamily = false;
+            if (wholeNotes (d) <= last) ordered = false;
+            last = wholeNotes (d);
+        }
+        expect (onlyFamily, juce::String (familyName (f)) + ": every step lands inside the family");
+        expect (ordered, juce::String (familyName (f)) + ": steps go from short to long");
+    }
+
+    // straight family, from 1/16 one step up is 1/8 — not 1/8T, not 1/16.
+    knob->setFamily ((int) Family::Straight);
+    setP (proc.state(), "lfoARateDiv", (float) indexOfLabel ("1/16"));
+    pump (0.1);
+    const int at16 = juce::roundToInt (knob->beatKnob().getValue());
+    knob->beatKnob().setValue ((double) at16 + 1.0, juce::sendNotificationSync);
+    pump (0.05);
+    expect (divNow() == indexOfLabel ("1/8"), "straight: one step up from 1/16 is 1/8 (got " + juce::String (label (divNow())) + ")");
+
+    // the host moving the parameter moves the knob to the nearest member
+    setP (proc.state(), "lfoARateDiv", (float) indexOfLabel ("1/4T"));
+    pump (0.1);
+    expect (knob->familyMode() == (int) Family::Straight, "the family is a display choice, the parameter can hold any division");
+    expect (knob->beatKnob().getValue() >= (double) at16 && knob->beatKnob().getValue() <= (double) at16 + 1.0,
+            "a host move to 1/4T puts the knob on the nearest straight member (between 1/16 and 1/8)");
+    expect (proc.magicStateRef().getPropertyAsValue ("lfoARateFamily").getValue().toString() == "1",
+            "the family is remembered as a state property");
+
+    // the table reaches 1/32 and beyond
+    expect (indexOfLabel ("1/32") >= 0 && indexOfLabel ("1/64") >= 0 && indexOfLabel ("1/128") >= 0, "divisions down to 1/128 exist");
+    ed.reset();
+    return failures;
+}
+
 static int runSelfTest()
 {
-    const int paintingFailures = testTreePainting();
+    const int paintingFailures = testTreePainting() + testChordSpectrum() + testBeatFamilies();
 
     WaveTreeProcessor proc;
     proc.setRateAndBufferSizeDetails (48000.0, 512);
@@ -452,7 +816,7 @@ static int runSelfTest()
         test.run (*ed, modeNames[m]);
     }
 
-    for (auto* id : { "morphSync", "attackSync", "decaySync", "releaseSync", "lfoARateSync", "lfoBRateSync" })
+    for (auto* id : { "morphSync", "attackSync", "decaySync", "releaseSync", "glideSync", "lfoARateSync", "lfoBRateSync" })
         setP (apvts, id, 1.0f);
     pump (0.2);
     test.run (*ed, "all time knobs in beats");
@@ -606,6 +970,22 @@ int main (int argc, char** argv)
             setP (a, "lfoARateMs", 3200.0f);
         }, nullptr, true });
 
+    // 1b ------------------------------------------- Cascade, chord spectrum with the analytic fit
+    states.push_back ({
+        "Cascade - chord D(h) with the analytic fit",
+        [] (WaveTreeProcessor& p)
+        {
+            auto& a = p.state();
+            setP (a, "mode", 1.0f);
+            setP (a, "wavelet", 10.0f);               // Bior4.4: symmetric
+            setP (a, "hurst", 0.5f);
+            setP (a, "intermittency", 0.6f);
+            setP (a, "sustain", 0.9f);
+            setP (a, "output", 0.7f);
+            p.magicStateRef().getPropertyAsValue (DhSpectrumView::kChordProp).setValue ("1");
+            p.magicStateRef().getPropertyAsValue (DhSpectrumView::kAnalyticProp).setValue ("1");
+        }, nullptr, true });
+
     // 2 --------------------------------------------------------------- Bands
     states.push_back ({
         "Bands - drawbar formant mode",
@@ -664,14 +1044,15 @@ int main (int argc, char** argv)
         [] (WaveTreeProcessor& p)
         {
             auto& t = p.treeEdit();
+            const float slope = (float) p.treeSlope();         // painted as if by hand, at the patch's slope
             t.setBandGain (1, 0.0f);
             t.setBandGain (2, 1.85f);
             t.setBandGain (5, 0.35f);
             t.setBandGain (8, 1.55f);
             for (int k = 0; k < 64; ++k)
-                t.setNodeLevel (64 + k, 0.55f + 0.35f * std::sin ((float) k / 64.0f * 6.2831853f));
+                t.setNodeLevel (64 + k, 0.55f + 0.35f * std::sin ((float) k / 64.0f * 6.2831853f), slope);
             for (int k = 110; k <= 199; ++k)
-                t.setNodeLevel (512 + k, 0.0f);
+                t.setNodeLevel (512 + k, 0.0f, slope);
             t.bump();
             p.treeEditGesture();
         }, true });

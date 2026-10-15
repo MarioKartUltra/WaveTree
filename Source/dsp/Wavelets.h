@@ -1,10 +1,15 @@
 // =============================================================================
 //  WaveTree — Wavelets.h
-//  Orthonormal wavelet filter banks (Haar + Daubechies). We store the analysis
-//  low-pass h (sum = sqrt(2)); the high-pass g is the standard alternating flip
-//  g[k] = (-1)^k h[K-1-k]. Because these are ORTHONORMAL, the synthesis stage is
-//  the exact adjoint of analysis, which guarantees perfect reconstruction (see
-//  Dwt.h). JUCE-free, header-only, std-only.
+//  Wavelet filter banks: Haar, Daubechies, Symlets, Coiflets (orthonormal) and
+//  three biorthogonal pairs. We store the analysis low-pass h as CORRELATION
+//  taps (sum = sqrt(2); this is PyWavelets' dec_lo reversed); for the orthonormal
+//  families the high-pass is the alternating flip g[k] = (-1)^k h[K-1-k] and the
+//  synthesis stage is the exact adjoint of analysis. The biorthogonal families
+//  carry their own high-pass and their DUAL synthesis filters (slo, shi =
+//  PyWavelets' rec_lo, rec_hi), which Dwt.h uses in place of the adjoint; the
+//  periodic transform still reconstructs exactly (wavetree_check, PR test).
+//  Tables generated from PyWavelets 1.8 (dmey left out: only approximate PR).
+//  JUCE-free, header-only, std-only.
 // =============================================================================
 #pragma once
 
@@ -14,13 +19,19 @@
 
 namespace wavetree
 {
-enum class WaveletType { Haar = 0, Db2 = 1, Db4 = 2, Db6 = 3 };
+// Appended in this order: a project's saved index keeps its wavelet.
+enum class WaveletType { Haar = 0, Db2 = 1, Db4 = 2, Db6 = 3, Db10 = 4, Sym4 = 5, Sym8 = 6, Coif2 = 7, Coif4 = 8,
+                         Bior22 = 9, Bior44 = 10, Bior68 = 11 };
+inline constexpr int kNumWavelets = 12;
 
 struct Wavelet
 {
-    std::vector<double> lo;   // analysis low-pass h (decomposition)
-    std::vector<double> hi;   // analysis high-pass g = (-1)^k h[K-1-k]
+    std::vector<double> lo;   // analysis low-pass (correlation taps)
+    std::vector<double> hi;   // analysis high-pass
+    std::vector<double> slo;  // synthesis low-pass: == lo when orthogonal, the dual filter otherwise
+    std::vector<double> shi;  // synthesis high-pass
     std::string name;
+    bool orthogonal = true;
 
     int taps() const { return (int) lo.size(); }
 };
@@ -46,24 +57,79 @@ inline Wavelet makeWavelet(WaveletType t)
                      0.032883011666982945, -0.010597401784997278 };
             break;
         case WaveletType::Db6:
-        default:
             w.name = "Daubechies-6";
             w.lo = { 0.11154074335008017, 0.4946238903983854, 0.7511339080215775,
                      0.3152503517092432, -0.22626469396516913, -0.12976686756709563,
                      0.09750160558707936, 0.02752286553001629, -0.031582039318031156,
                      0.0005538422009938016, 0.004777257511010651, -0.001077301085308479 };
             break;
+        case WaveletType::Db10:
+            w.name = "Daubechies-10";
+            w.lo  = { 0.026670057900555554, 0.1881768000776915, 0.52720118893172563, 0.68845903945360354, 0.28117234366057747, -0.24984642432731538, -0.19594627437737705, 0.12736934033579325, 0.093057364603572348, -0.071394147166397082, -0.029457536821875813, 0.033212674059341002, 0.0036065535669561697, -0.010733175483330575, 0.0013953517470529011, 0.0019924052951850561, -0.00068585669495971162, -0.00011646685512928545, 9.3588670320069592e-05, -1.3264202894521244e-05 };
+            break;
+        case WaveletType::Sym4:
+            w.name = "Symlet-4";
+            w.lo  = { 0.032223100604042702, -0.012603967262037833, -0.099219543576847216, 0.29785779560527736, 0.80373875180591614, 0.49761866763201545, -0.02963552764599851, -0.075765714789273325 };
+            break;
+        case WaveletType::Sym8:
+            w.name = "Symlet-8";
+            w.lo  = { 0.0018899503327594609, -0.0003029205147213668, -0.014952258337048231, 0.0038087520138906151, 0.049137179673607506, -0.027219029917056003, -0.051945838107709037, 0.3644418948353314, 0.77718575170052351, 0.48135965125837221, -0.061273359067658524, -0.14329423835080971, 0.0076074873249176054, 0.031695087811492981, -0.00054213233179114812, -0.0033824159510061256 };
+            break;
+        case WaveletType::Coif2:
+            w.name = "Coiflet-2";
+            w.lo  = { 0.016387336463203641, -0.041464936786871777, -0.067372554723725595, 0.38611006682276289, 0.81272363544941351, 0.41700518442323908, -0.076488599078280761, -0.059434418646431092, 0.02368017194684777, 0.0056114348193688343, -0.0018232088709110323, -0.00072054944552034698 };
+            break;
+        case WaveletType::Coif4:
+            w.name = "Coiflet-4";
+            w.lo  = { 0.00089231390253700297, -0.001629492425226786, -0.0073461679362680507, 0.016068947131575029, 0.02668230466960483, -0.081266710249193727, -0.056077319603569258, 0.41530842700068227, 0.78223893442428261, 0.43438603311435653, -0.066627472366817167, -0.096220424535952642, 0.039334422605589149, 0.025082253337949612, -0.015211728187697211, -0.0056582838001308835, 0.0037514346971460866, 0.0012665610789256603, -0.00058902022463321654, -0.00025997433712225682, 6.2338854312787192e-05, 3.1229861599195265e-05, -3.259647940030751e-06, -1.7849909144933469e-06 };
+            break;
+        case WaveletType::Bior22:
+            w.name = "Biorthogonal 2.2 (CDF 5/3)";
+            w.lo  = { -0.17677669529663689, 0.35355339059327379, 1.0606601717798212, 0.35355339059327379, -0.17677669529663689, 0 };
+            w.hi  = { 0, -0, 0.35355339059327379, -0.70710678118654757, 0.35355339059327379, -0 };
+            w.slo = { 0, 0.35355339059327379, 0.70710678118654757, 0.35355339059327379, 0, 0 };
+            w.shi = { 0, 0.17677669529663689, 0.35355339059327379, -1.0606601717798212, 0.35355339059327379, 0.17677669529663689 };
+            w.orthogonal = false;
+            break;
+        case WaveletType::Bior44:
+            w.name = "Biorthogonal 4.4 (CDF 9/7)";
+            w.lo  = { 0.03782845550726404, -0.023849465019556843, -0.11062440441843718, 0.37740285561283066, 0.85269867900889385, 0.37740285561283066, -0.11062440441843718, -0.023849465019556843, 0.03782845550726404, 0 };
+            w.hi  = { 0, -0, -0.064538882628697058, 0.040689417609164058, 0.41809227322161724, -0.7884856164055829, 0.41809227322161724, 0.040689417609164058, -0.064538882628697058, -0 };
+            w.slo = { 0, -0.064538882628697058, -0.040689417609164058, 0.41809227322161724, 0.7884856164055829, 0.41809227322161724, -0.040689417609164058, -0.064538882628697058, 0, 0 };
+            w.shi = { 0, -0.03782845550726404, -0.023849465019556843, 0.11062440441843718, 0.37740285561283066, -0.85269867900889385, 0.37740285561283066, 0.11062440441843718, -0.023849465019556843, -0.03782845550726404 };
+            w.orthogonal = false;
+            break;
+        case WaveletType::Bior68:
+            w.name = "Biorthogonal 6.8";
+            w.lo  = { 0.0019088317364812906, -0.0019142861290887667, -0.016990639867602342, 0.01193456527972926, 0.04973290349094079, -0.077263173167204144, -0.09405920349573646, 0.42079628460982682, 0.82592299745840225, 0.42079628460982682, -0.09405920349573646, -0.077263173167204144, 0.04973290349094079, 0.01193456527972926, -0.016990639867602342, -0.0019142861290887667, 0.0019088317364812906, 0 };
+            w.hi  = { 0, -0, 0, -0, 0.014426282505624435, -0.014467504896790148, -0.078722001062628819, 0.040367979030339923, 0.41784910915027457, -0.75890772945365415, 0.41784910915027457, 0.040367979030339923, -0.078722001062628819, -0.014467504896790148, 0.014426282505624435, -0, 0, -0 };
+            w.slo = { 0, 0, 0, 0.014426282505624435, 0.014467504896790148, -0.078722001062628819, -0.040367979030339923, 0.41784910915027457, 0.75890772945365415, 0.41784910915027457, -0.040367979030339923, -0.078722001062628819, 0.014467504896790148, 0.014426282505624435, 0, 0, 0, 0 };
+            w.shi = { 0, -0.0019088317364812906, -0.0019142861290887667, 0.016990639867602342, 0.01193456527972926, -0.04973290349094079, -0.077263173167204144, 0.09405920349573646, 0.42079628460982682, -0.82592299745840225, 0.42079628460982682, 0.09405920349573646, -0.077263173167204144, -0.04973290349094079, 0.01193456527972926, 0.016990639867602342, -0.0019142861290887667, -0.0019088317364812906 };
+            w.orthogonal = false;
+            break;
+        default:
+            return makeWavelet(WaveletType::Db4);
     }
     const int K = (int) w.lo.size();
-    w.hi.resize((size_t) K);
-    for (int k = 0; k < K; ++k)
-        w.hi[(size_t) k] = ((k & 1) ? -1.0 : 1.0) * w.lo[(size_t) (K - 1 - k)];
+    if (w.orthogonal)
+    {
+        w.hi.resize((size_t) K);
+        for (int k = 0; k < K; ++k)
+            w.hi[(size_t) k] = ((k & 1) ? -1.0 : 1.0) * w.lo[(size_t) (K - 1 - k)];
+        w.slo = w.lo;
+        w.shi = w.hi;
+    }
     return w;
 }
 
 inline const char* waveletName(WaveletType t)
 {
-    switch (t) { case WaveletType::Haar: return "Haar"; case WaveletType::Db2: return "Db2";
-                 case WaveletType::Db4: return "Db4"; default: return "Db6"; }
+    switch (t)
+    {
+        case WaveletType::Haar: return "Haar";     case WaveletType::Db2: return "Db2";     case WaveletType::Db4: return "Db4";
+        case WaveletType::Db6: return "Db6";       case WaveletType::Db10: return "Db10";   case WaveletType::Sym4: return "Sym4";
+        case WaveletType::Sym8: return "Sym8";     case WaveletType::Coif2: return "Coif2"; case WaveletType::Coif4: return "Coif4";
+        case WaveletType::Bior22: return "Bior2.2"; case WaveletType::Bior44: return "Bior4.4"; default: return "Bior6.8";
+    }
 }
 } // namespace wavetree

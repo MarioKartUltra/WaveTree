@@ -101,10 +101,12 @@
           <Slider parameter="bandQ" caption="Band Q" tooltip="Width of the band emphasis."/>
         </View>
         <View class="fascia" caption="CASCADE" visibility="viewCascade">
+          <Slider parameter="tilt" caption="Tilt" tooltip="Extra spectral slope on top of the Hurst slope (50 % = none). Painted levels follow it too."/>
           <Slider parameter="hurst" caption="Hurst" tooltip="Hurst exponent: spectral slope of the multifractal cascade (high = smooth)."/>
           <Slider parameter="intermittency" caption="Intermittency" tooltip="Cascade intermittency: multifractal burstiness (widens the D(h) arch)."/>
         </View>
         <View class="fascia" caption="ATOMS" visibility="viewAtoms">
+          <Slider parameter="tilt" caption="Tilt" tooltip="Extra spectral slope across the atoms' scales (50 % = none). Painted levels follow it too."/>
           <Slider parameter="density" caption="Density" tooltip="Fraction of nonzero coefficients (sparse wavelet grains)."/>
         </View>
 
@@ -115,11 +117,19 @@
             <SyncKnob base="morph" caption="Interval"
                       tooltip="Morph interval: free time, or a beat division that follows the host tempo."/>
           </View>
-          <View class="fascia" caption="OSC" flex-direction="column">
+          <View class="fascia" caption="OSC" flex-direction="column" flex-grow="1.3">
             <Slider parameter="voices" caption="Voices" tooltip="Polyphony: how many notes can sound at once (1 to 16)."/>
-            <ToggleButton parameter="antiAlias" text="anti-alias" class="chip"
-                          width="68" max-width="68"
-                          tooltip="Mip-mapped anti-aliased oscillator read (cleaner high notes)."/>
+            <View class="row" min-height="20" max-height="20" flex-justify-content="center">
+              <ToggleButton parameter="antiAlias" text="anti-alias" class="chip"
+                            width="68" max-width="68"
+                            tooltip="Mip-mapped anti-aliased oscillator read (cleaner high notes)."/>
+              <ToggleButton parameter="legato" text="legato" class="chip" width="52" max-width="52"
+                            tooltip="A key that takes over a sounding voice keeps its envelope and table (no retrigger). Held keys always come back when the key that cut them is released."/>
+            </View>
+          </View>
+          <View class="fascia" caption="GLIDE" flex-grow="0.75">
+            <SyncKnob base="glide" caption="Time"
+                      tooltip="Pitch slide from the previous key: free time or a beat division, 0 = off. The same time for any interval."/>
           </View>
         </View>
 

@@ -1,10 +1,12 @@
 // =============================================================================
 //  WaveTree — Dwt.h
 //  Periodic, multi-level orthonormal DWT / IDWT over a fixed frame of length
-//  N = 2^L. One analysis level applies the orthogonal matrix W (downsampled
-//  convolution with lo/hi); the synthesis level applies its adjoint W^T (the
-//  transposed scatter-add). For orthonormal filters W^T = W^{-1}, so
-//  IDWT(DWT(x)) == x exactly (verified in the offline PR test). Periodic
+//  N = 2^L. One analysis level applies the matrix W (downsampled correlation
+//  with lo/hi); the synthesis level is the transposed scatter-add with the
+//  synthesis filters slo/shi. For orthonormal filters those equal lo/hi and the
+//  synthesis is the adjoint W^T = W^{-1}; for the biorthogonal families they are
+//  the dual filters and the product is the identity likewise. IDWT(DWT(x)) == x
+//  exactly for every family (verified in the offline PR test). Periodic
 //  boundaries => the reconstructed frame is naturally periodic, so it loops
 //  cleanly as a wavetable.  JUCE-free, header-only.
 //
@@ -118,7 +120,7 @@ private:
             for (int k = 0; k < K; ++k)
             {
                 const int idx = (2 * n + k) % len;
-                sig[idx] += w.lo[(size_t) k] * av + w.hi[(size_t) k] * dv;
+                sig[idx] += w.slo[(size_t) k] * av + w.shi[(size_t) k] * dv;   // dual filters when biorthogonal
             }
         }
     }

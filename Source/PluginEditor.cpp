@@ -52,8 +52,9 @@ juce::Rectangle<float> CoeffTreeView::nodeArea (int b, int k) const
     return { grid.getX() + cw * (float) k, grid.getY(), cw, grid.getHeight() };
 }
 
-// One scale for the whole tree, so a bar's height means the same in every row
-// and a painted bar is as high as it was drawn.
+// One scale for the whole tree, tied to the generated peak, so the bars fall
+// with the tree's decay toward the fine rows. A painted bar is as high as it
+// was drawn, and moves with the tree when the slope changes (paintedMagnitude).
 float CoeffTreeView::shownLevel (int b, int k) const
 {
     using wavetree::TreeEdit;
@@ -62,10 +63,11 @@ float CoeffTreeView::shownLevel (int b, int k) const
     const auto& tree  = proc->treeEdit();
     const float level = tree.getNodeLevel (i);
     if (level >= 0.0f)
-        return level < (float) TreeEdit::kMuteBelow ? 0.0f : level;
+        return (float) TreeEdit::magnitudeToLevel (wavetree::paintedMagnitude (level, tree.getNodeSlope (i), (double) treePeak,
+                                                                               treePeakBand, b, proc->treeSlope()),
+                                                   (double) treePeak);
 
-    return (float) TreeEdit::magnitudeToLevel ((double) mags[(size_t) i] * (double) tree.getNodeGain (i),
-                                               (double) treePeak);
+    return (float) TreeEdit::magnitudeToLevel ((double) mags[(size_t) i] * (double) tree.getNodeGain (i), (double) treePeak);
 }
 
 int CoeffTreeView::bandAtY (float y) const
@@ -83,8 +85,10 @@ void CoeffTreeView::timerCallback()
     {
         lastStamp = stamp;
         proc->copyCoeffMags (mags);
-        treePeak = 0.0f;
-        for (auto m : mags) treePeak = std::max (treePeak, m);
+        treePeak = 0.0f; treePeakBand = 0;
+        for (int b = 0; b < kBands; ++b)
+            for (int k = 0; k < bandSize (b); ++k)
+                if (mags[(size_t) (bandOff (b) + k)] > treePeak) { treePeak = mags[(size_t) (bandOff (b) + k)]; treePeakBand = b; }
     }
     repaint();   // gains can change without a rebuild stamp (live painting)
 }
@@ -143,14 +147,31 @@ void CoeffTreeView::paint (juce::Graphics& g)
     }
 }
 
-// A stroke belongs to the row it started in. The rows are thin, so the mouse
-// leaves them all the time: above the row is the top of the scale, below it is
-// silence, and the neighbouring rows are left alone.
+// A stroke belongs to the row it started in while the pointer stays near it:
+// the rows are thin and the mouse overshoots, so a little above the row is the
+// top of the scale and a little below it is silence. Further than that, the
+// stroke is tracing a BONE: in every other row it passes, the single node under
+// the pointer takes the stroke's level — click a coarse node and drag up
+// through the finer scales to build a branch.
 void CoeffTreeView::applyEdit (const juce::MouseEvent& e, bool erase)
 {
     if (proc == nullptr || strokeBand < 0) return;
     auto& tree = proc->treeEdit();
     const int b = strokeBand;
+
+    // Only a climb into the FINER rows above leaves the row the stroke started in
+    // (and only past 40 % of the next row, so a small overshoot is still "the
+    // top"). Below its row a stroke stays put: the level is 0, so a drag to the
+    // bottom of the view mutes every node it sweeps.
+    if (! strokeInGutter && b + 1 < kBands)
+    {
+        const auto home = rowArea (b);
+        if (boneMode || e.position.y < home.getY() - 0.4f * home.getHeight())
+        {
+            extendBone (e, erase);
+            return;
+        }
+    }
 
     if (strokeInGutter)                           // gutter: band gain 0..2
     {
@@ -174,11 +195,63 @@ void CoeffTreeView::applyEdit (const juce::MouseEvent& e, bool erase)
             const int   node = from + (k >= from ? s : -s);
             const float t    = steps == 0 ? 1.0f : (float) s / (float) steps;
             if (erase) tree.clearNode (off + node);
-            else       tree.setNodeLevel (off + node, fromLevel + t * (level - fromLevel));
+            else       tree.setNodeLevel (off + node, fromLevel + t * (level - fromLevel), (float) proc->treeSlope());
         }
         lastNode  = k;
         lastLevel = level;
     }
+    tree.bump();
+}
+
+// A bone: from the node the stroke left its row at, ONE node per finer row,
+// each the child of the node below it nearest the pointer (a branch of the
+// dyadic tree). Each row the bone reaches holds only that node until the
+// button is released; while the pointer is in one of those rows, that row's
+// node follows the pointer's height (so a climb through a row leaves its node
+// at the top, and coming back down adjusts the same node). Rows a fast drag
+// skipped take the level of the node below them. Below the start row the
+// start node's level is 0, as for any stroke.
+void CoeffTreeView::extendBone (const juce::MouseEvent& e, bool erase)
+{
+    auto& tree = proc->treeEdit();
+    const int   b     = strokeBand;
+    const float slope = (float) proc->treeSlope();
+    if (! boneMode)
+    {
+        boneMode = true;
+        boneTop  = b;
+        boneAt.fill (-1);
+        boneAt[(size_t) b] = juce::jmax (0, lastNode);     // the start node keeps the level it has
+    }
+
+    int row = bandAtY ((float) e.position.y);
+    if (row < 0) row = e.position.y < rowArea (kBands - 1).getY() ? kBands - 1 : b;   // above the view: the finest row
+    row = juce::jmax (row, b);
+
+    auto heightIn = [this, &e] (int nb)
+    {
+        const auto grid = gridArea (nb);
+        return juce::jlimit (0.0f, 1.0f, (grid.getBottom() - e.position.y) / grid.getHeight());
+    };
+    auto put = [&] (int nb, float level)
+    {
+        const int i = bandOff (nb) + boneAt[(size_t) nb];
+        if (erase) tree.clearNode (i);
+        else       tree.setNodeLevel (i, level, slope);
+    };
+
+    for (int nb = boneTop + 1; nb <= row; ++nb)           // claim the rows reached since the last event
+    {
+        const int  n    = bandSize (nb), r = n / bandSize (nb - 1);
+        const int  up   = boneAt[(size_t) (nb - 1)];
+        const auto grid = gridArea (nb);
+        const int  at   = (int) std::floor ((e.position.x - grid.getX()) / grid.getWidth() * (float) n);
+        boneAt[(size_t) nb] = juce::jlimit (up * r, up * r + r - 1, at);
+        const float below = tree.getNodeLevel (bandOff (nb - 1) + up);
+        put (nb, nb == row ? heightIn (nb) : juce::jmax (0.0f, below));
+        boneTop = nb;
+    }
+    put (row, heightIn (row));                            // the row under the pointer: its one node follows
     tree.bump();
 }
 
@@ -187,6 +260,7 @@ void CoeffTreeView::mouseDown (const juce::MouseEvent& e)
     strokeBand = bandAtY ((float) e.position.y);
     strokeInGutter = strokeBand >= 0 && e.position.x < rowArea (strokeBand).getX() + kGutterW;
     lastNode = -1;
+    boneMode = false; boneTop = -1;
     applyEdit (e, e.mods.isRightButtonDown() || e.mods.isAltDown());
 }
 
@@ -262,25 +336,85 @@ void WaveScopeView::paint (juce::Graphics& g)
 // =============================================================================
 DhSpectrumView::DhSpectrumView (WaveTreeProcessor* p) : proc (p)
 {
-    setTooltip ("D(h): multifractal Legendre spectrum of the current coefficient tree. "
-                "The arch widens with Intermittency; Hurst moves its centre.");
+    setTooltip ("D(h): multifractal Legendre spectrum of the coefficient tree. "
+                "The arch widens with Intermittency; Hurst moves its centre. KEY: the last key played. "
+                "CHORD: every sounding voice's tree together (moments added per band). "
+                "FIT: the Cascade generator's closed-form parabola, dashed.");
+    readProps();
     startTimerHz (10);
+}
+
+void DhSpectrumView::readProps()
+{
+    if (proc == nullptr) return;
+    auto& st = proc->magicStateRef();
+    const bool c = st.getPropertyAsValue (kChordProp).getValue().toString() == "1";
+    const bool a = st.getPropertyAsValue (kAnalyticProp).getValue().toString() == "1";
+    if (c != chord || a != analytic) { chord = c; analytic = a; lastStamp = 0xFFFFFFFFFFFFFFFFull; repaint(); }
+}
+
+void DhSpectrumView::setChordMode (bool on)
+{
+    if (proc != nullptr) proc->magicStateRef().getPropertyAsValue (kChordProp).setValue (on ? "1" : "0");
+    readProps();
+}
+
+void DhSpectrumView::setAnalyticShown (bool on)
+{
+    if (proc != nullptr) proc->magicStateRef().getPropertyAsValue (kAnalyticProp).setValue (on ? "1" : "0");
+    readProps();
+}
+
+void DhSpectrumView::recompute()
+{
+    constexpr int kFrame  = wavetree::WaveletVoice::kFrame;
+    constexpr int kLevels = wavetree::WaveletVoice::kLevels;
+    auto bandSize = [] (int b) { return b == 0 ? (kFrame >> kLevels) : (kFrame >> (kLevels - b + 1)); };
+    auto bandOff  = [&] (int b) { int o = kFrame >> kLevels; for (int i = 1; i < b; ++i) o += bandSize (i); return b == 0 ? 0 : o; };
+    if (chord)
+    {
+        numVoices = proc->copyChordCoeffMags (mags, info);
+        std::vector<const float*> sets;
+        for (int v = 0; v < numVoices; ++v) sets.push_back (mags.data() + (size_t) v * kFrame);
+        mfa = wavetree::computeDhMulti (sets.data(), numVoices, kLevels + 1, bandOff, bandSize);
+    }
+    else
+    {
+        proc->copyCoeffMags (mags);
+        info.assign (1, proc->shownVoiceInfo());
+        numVoices = 1;
+        mfa = wavetree::computeDh (mags.data(), kLevels + 1, bandOff, bandSize);
+    }
+    repaint();
 }
 
 void DhSpectrumView::timerCallback()
 {
     if (proc == nullptr) return;
-    const auto stamp = proc->coeffStamp();
+    readProps();
+    const std::uint64_t stamp = chord ? proc->chordStamp() : (std::uint64_t) proc->coeffStamp();
     if (stamp == lastStamp) return;
     lastStamp = stamp;
-    proc->copyCoeffMags (mags);
+    recompute();
+}
 
-    constexpr int kFrame  = wavetree::WaveletVoice::kFrame;
-    constexpr int kLevels = wavetree::WaveletVoice::kLevels;
-    auto bandSize = [] (int b) { return b == 0 ? (kFrame >> kLevels) : (kFrame >> (kLevels - b + 1)); };
-    auto bandOff  = [&] (int b) { int o = kFrame >> kLevels; for (int i = 1; i < b; ++i) o += bandSize (i); return b == 0 ? 0 : o; };
-    mfa = wavetree::computeDh (mags.data(), kLevels + 1, bandOff, bandSize);
-    repaint();
+juce::Rectangle<float> DhSpectrumView::chipKey() const   { return { 40.0f, 3.0f, 30.0f, 13.0f }; }
+juce::Rectangle<float> DhSpectrumView::chipChord() const { return { 72.0f, 3.0f, 40.0f, 13.0f }; }
+juce::Rectangle<float> DhSpectrumView::chipFit() const   { return { 118.0f, 3.0f, 26.0f, 13.0f }; }
+
+void DhSpectrumView::mouseDown (const juce::MouseEvent& e)
+{
+    const auto p = e.position;
+    if (chipKey().contains (p))        setChordMode (false);
+    else if (chipChord().contains (p)) setChordMode (true);
+    else if (chipFit().contains (p))   setAnalyticShown (! analytic);
+}
+
+double DhSpectrumView::fitCentre() const
+{
+    for (const auto& vi : info)
+        if (vi.mode == wavetree::Mode::Cascade) return vi.slope;
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 void DhSpectrumView::paint (juce::Graphics& g)
@@ -288,39 +422,112 @@ void DhSpectrumView::paint (juce::Graphics& g)
     auto b = getLocalBounds().toFloat();
     g.setColour (kBg);
     g.fillRoundedRectangle (b, 6.0f);
-    auto plot = b.reduced (10.0f, 8.0f);
-    plot.removeFromTop (10.0f);
 
-    g.setColour (kText2);
+    // fixed axes, so arches of different trees can be compared by eye. The
+    // Cascade generator puts the arch's centre at h* = 0.35 + 1.6 Hurst
+    // (CoeffGen.h), so h runs from -1 to 3; D(h) from 0 to 1.2 (never above 1).
+    constexpr double kHLo = -1.0, kHHi = 3.0, kDLo = 0.0, kDHi = 1.2;
+    auto plot = b.reduced (10.0f, 8.0f);
+    plot.removeFromTop (10.0f);                      // the title row: D(h) and the chips
+    const auto readoutRow = plot.removeFromTop (12.0f);   // the numbers, on their own line
+    plot.removeFromBottom (11.0f);                   // room for the h ticks
+    plot.removeFromLeft (14.0f);                     // room for the D ticks
+    const auto hLabel = plot.removeFromRight (12.0f).removeFromBottom (11.0f).translated (0.0f, 11.0f);
+
     g.setFont (monoFont (9.5f));
+    g.setColour (kText2);
     g.drawText ("D(h)", b.reduced (8.0f, 4.0f), juce::Justification::topLeft, false);
 
+    // the chips: KEY | CHORD, FIT
+    auto chip = [&] (juce::Rectangle<float> r, const char* text, bool on)
+    {
+        g.setColour (on ? kAccent : kOutline.withAlpha (0.6f));
+        g.fillRoundedRectangle (r, 3.0f);
+        g.setColour (on ? kBg : kText2);
+        g.setFont (monoFont (8.0f));
+        g.drawText (text, r, juce::Justification::centred, false);
+    };
+    chip (chipKey(), "KEY", ! chord);
+    chip (chipChord(), "CHORD", chord);
+    chip (chipFit(), "FIT", analytic);
+
+    auto X = [&] (double h) { return plot.getX() + (float) ((h - kHLo) / (kHHi - kHLo)) * plot.getWidth(); };
+    auto Y = [&] (double d) { return plot.getBottom() - (float) ((d - kDLo) / (kDHi - kDLo)) * plot.getHeight(); };
+
+    // grid and ticks: h = -1 .. 3 along the bottom; D = 0, 1 at the left
+    g.setFont (monoFont (8.0f));
+    for (int hi = -1; hi <= 3; ++hi)
+    {
+        const float x = X (hi);
+        g.setColour (kOutline.withAlpha (hi == 0 ? 0.7f : 0.35f));
+        g.drawVerticalLine ((int) x, plot.getY(), plot.getBottom());
+        g.setColour (kText2);
+        g.drawText (juce::String (hi), juce::Rectangle<float> (x - 10.0f, plot.getBottom() + 1.0f, 20.0f, 10.0f),
+                    juce::Justification::centred, false);
+    }
+    for (int di = 0; di <= 1; ++di)
+    {
+        const float y = Y (di);
+        g.setColour (kOutline.withAlpha (di == 1 ? 0.7f : 0.35f));
+        g.drawHorizontalLine ((int) y, plot.getX(), plot.getRight());
+        g.setColour (kText2);
+        g.drawText (juce::String (di), juce::Rectangle<float> (plot.getX() - 14.0f, y - 5.0f, 12.0f, 10.0f),
+                    juce::Justification::centredRight, false);
+    }
+    g.setColour (kText2);
+    g.drawText ("h", hLabel, juce::Justification::centredRight, false);
+
+    g.saveState();
+    g.reduceClipRegion (plot.toNearestInt());        // a spectrum outside the window is cut, not stretched
+
+    // the analytic parabola(s), dashed: one per voice in the chord (their envelope is the chord's)
+    if (analytic)
+    {
+        const float dashes[] = { 3.0f, 3.0f };
+        for (const auto& vi : info)
+        {
+            if (vi.mode != wavetree::Mode::Cascade) continue;
+            juce::Path pth;
+            bool started = false;
+            for (int i = 0; i <= 160; ++i)
+            {
+                const double h = kHLo + (kHHi - kHLo) * i / 160.0;
+                const double d = wavetree::analyticDhAt (vi.slope, vi.intermittency, h);
+                if (d < kDLo - 0.05) { started = false; continue; }
+                const float x = X (h), y = Y (juce::jlimit (kDLo, kDHi, d));
+                if (! started) { pth.startNewSubPath (x, y); started = true; } else pth.lineTo (x, y);
+            }
+            juce::Path dashed;
+            juce::PathStrokeType (1.0f).createDashedStroke (dashed, pth, dashes, 2);
+            g.setColour (kAccent.withAlpha (0.55f));
+            g.fillPath (dashed);
+        }
+    }
+
     if (! mfa.valid || mfa.count < 3)
-    { g.setColour (kAccDim); g.drawText ("--", plot, juce::Justification::centred, false); return; }
-
-    const double hLo = mfa.hMin - 0.05, hHi = mfa.hMax + 0.05;
-    const double span = std::max (0.1, hHi - hLo);
-    auto X = [&] (double h) { return plot.getX() + (float) ((h - hLo) / span) * plot.getWidth(); };
-    auto Y = [&] (double d) { return plot.getBottom() - (float) juce::jlimit (0.0, 1.0, d) * plot.getHeight(); };
-
-    g.setColour (kOutline.withAlpha (0.5f));
-    g.drawHorizontalLine ((int) Y (1.0), plot.getX(), plot.getRight());
+    {
+        g.restoreState();
+        g.setColour (kAccDim); g.setFont (monoFont (9.5f)); g.drawText ("--", plot, juce::Justification::centred, false);
+        return;
+    }
 
     juce::Path pth;
     bool started = false;
     for (int i = 0; i < mfa.count; ++i)
     {
-        const float x = X (mfa.h[i]), y = Y (mfa.Dh[i]);
+        const float x = X (mfa.h[i]), y = Y (juce::jlimit (kDLo, kDHi, mfa.Dh[i]));
         if (! started) { pth.startNewSubPath (x, y); started = true; }
         else pth.lineTo (x, y);
     }
     g.setColour (kAccent);
     g.strokePath (pth, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved));
+    g.restoreState();
 
     g.setColour (kText);
-    g.setFont (monoFont (9.5f));
-    g.drawText (juce::String::formatted ("h* %.2f  [%.2f, %.2f]", mfa.hPeak, mfa.hMin, mfa.hMax),
-                b.reduced (8.0f, 4.0f), juce::Justification::topRight, false);
+    g.setFont (monoFont (9.0f));
+    juce::String read = juce::String::formatted ("h* %.2f  [%.2f, %.2f]", mfa.hPeak, mfa.hMin, mfa.hMax);
+    if (chord) read << "  " << numVoices << (numVoices == 1 ? " voice" : " voices");
+    g.drawText (read, readoutRow, juce::Justification::centredRight, false);
 }
 
 // =============================================================================
@@ -460,96 +667,141 @@ void SigilView::paint (juce::Graphics& g)
 }
 
 // =============================================================================
-//  SyncKnob — the three-param tempo-sync convention (<base>Sync / <base>Ms /
-//  <base>Div) as ONE knob: the chip underneath switches between free time and
-//  host-tempo beat divisions, and the knob swaps its attachment to match.
+//  SyncKnob (declared in PluginEditor.h)
 // =============================================================================
-namespace
+SyncKnob::SyncKnob (WaveTreeProcessor* p, const juce::String& baseId) : proc (p), base (baseId)
 {
-class SyncKnob : public juce::Component,
-                 public juce::SettableTooltipClient,
-                 private juce::AudioProcessorValueTreeState::Listener
-{
-public:
-    static constexpr int kReadoutH = 16;
-    static constexpr int kChipH    = 18;
-
-    SyncKnob (WaveTreeProcessor* p, const juce::String& baseId) : proc (p), base (baseId)
+    for (auto* sl : { &msSlider, &divSlider })
     {
-        for (auto* s : { &msSlider, &divSlider })
+        sl->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        sl->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 72, kReadoutH);
+    }
+    addAndMakeVisible (msSlider);
+    addChildComponent (divSlider);
+    addAndMakeVisible (chip);
+    addChildComponent (familyChip);
+    chip.setTooltip ("Switch between free time (ms) and host-tempo beat divisions.");
+    familyChip.setTooltip ("Which beat values the knob steps through, in order of length: all, straight (1/n), triplets (T) or dotted (.)");
+    familyChip.onClick = [this] { setFamily ((family + 1) % 4); };
+
+    // in beats the knob walks a FAMILY of divisions in duration order, not the
+    // parameter's table order (which interleaves straight, triplet and dotted)
+    divSlider.setRange (0.0, 1.0, 1.0);
+    divSlider.textFromValueFunction = [this] (double v)
+    {
+        const int k = juce::jlimit (0, juce::jmax (0, familyCount - 1), (int) std::lround (v));
+        return familyCount > 0 ? juce::String (acv2::tempo::label (familyIdx[k])) : juce::String();
+    };
+    divSlider.valueFromTextFunction = [this] (const juce::String& t)
+    {
+        const int idx = acv2::tempo::indexOfLabel (t.trim().toStdString());
+        return idx < 0 ? divSlider.getValue() : (double) acv2::tempo::familyPosition ((acv2::tempo::Family) family, idx);
+    };
+    divSlider.onValueChange = [this]
+    {
+        if (settingDiv || proc == nullptr || familyCount == 0) return;
+        const int k = juce::jlimit (0, familyCount - 1, (int) std::lround (divSlider.getValue()));
+        if (auto* par = proc->state().getParameter (base + "Div"))
         {
-            s->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-            s->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 72, kReadoutH);
+            par->beginChangeGesture();
+            par->setValueNotifyingHost (par->convertTo0to1 ((float) familyIdx[k]));
+            par->endChangeGesture();
         }
-        addAndMakeVisible (msSlider);
-        addChildComponent (divSlider);
-        addAndMakeVisible (chip);
-        chip.setTooltip ("Switch between free time (ms) and host-tempo beat divisions.");
+    };
 
-        if (proc == nullptr) return;
-        auto& st = proc->state();
-        for (auto* suffix : { "Sync", "Ms", "Div" })
-            if (st.getParameter (base + suffix) == nullptr) return;
+    if (proc == nullptr) return;
+    auto& st = proc->state();
+    for (auto* suffix : { "Sync", "Ms", "Div" })
+        if (st.getParameter (base + suffix) == nullptr) return;
 
-        using APVTS = juce::AudioProcessorValueTreeState;
-        msAtt   = std::make_unique<APVTS::SliderAttachment> (st, base + "Ms",   msSlider);
-        divAtt  = std::make_unique<APVTS::SliderAttachment> (st, base + "Div",  divSlider);
-        chipAtt = std::make_unique<APVTS::ButtonAttachment> (st, base + "Sync", chip);
-        st.addParameterListener (base + "Sync", this);
-        listening = true;
-        showBeats (st.getRawParameterValue (base + "Sync")->load() > 0.5f);
-    }
+    using APVTS = juce::AudioProcessorValueTreeState;
+    msAtt   = std::make_unique<APVTS::SliderAttachment> (st, base + "Ms",   msSlider);
+    chipAtt = std::make_unique<APVTS::ButtonAttachment> (st, base + "Sync", chip);
+    st.addParameterListener (base + "Sync", this);
+    st.addParameterListener (base + "Div", this);
+    listening = true;
+    family = juce::jlimit (0, 3, (int) proc->magicStateRef().getPropertyAsValue (base + "Family").getValue());
+    rebuildFamily();
+    showBeats (st.getRawParameterValue (base + "Sync")->load() > 0.5f);
+}
 
-    ~SyncKnob() override
+SyncKnob::~SyncKnob()
+{
+    if (listening)
     {
-        if (listening) proc->state().removeParameterListener (base + "Sync", this);
+        proc->state().removeParameterListener (base + "Sync", this);
+        proc->state().removeParameterListener (base + "Div", this);
     }
+}
 
-    void setTooltip (const juce::String& tip) override
+void SyncKnob::setTooltip (const juce::String& tip)
+{
+    juce::SettableTooltipClient::setTooltip (tip);
+    msSlider.setTooltip (tip);
+    divSlider.setTooltip (tip);
+}
+
+void SyncKnob::resized()
+{
+    auto r = getLocalBounds();
+    auto chipRow = r.removeFromBottom (kChipH);
+    const int w = juce::jmin (52, chipRow.getWidth() / 2 - 2);
+    auto pair = chipRow.withSizeKeepingCentre (juce::jmin (chipRow.getWidth(), 2 * w + 4), kChipH - 2);
+    chip.setBounds (pair.removeFromLeft (w));
+    familyChip.setBounds (pair.removeFromRight (w));
+    msSlider.setBounds (r);
+    divSlider.setBounds (r);
+}
+
+int  SyncKnob::familyMode() const { return family; }
+
+void SyncKnob::setFamily (int f)
+{
+    family = juce::jlimit (0, 3, f);
+    if (proc != nullptr) proc->magicStateRef().getPropertyAsValue (base + "Family").setValue (family);
+    rebuildFamily();
+}
+
+// the knob's steps: the family's divisions, shortest first
+void SyncKnob::rebuildFamily()
+{
+    familyCount = acv2::tempo::familyOrder ((acv2::tempo::Family) family, familyIdx, kMaxFamily);
+    familyChip.setButtonText (acv2::tempo::familyName ((acv2::tempo::Family) family));
+    const juce::ScopedValueSetter<bool> guard (settingDiv, true);
+    divSlider.setRange (0.0, (double) juce::jmax (0, familyCount - 1), 1.0);
+    followDiv();
+    divSlider.updateText();
+}
+
+// the parameter moved (host, preset, our own write): put the knob on it
+void SyncKnob::followDiv()
+{
+    if (proc == nullptr || familyCount == 0) return;
+    const int idx = (int) proc->state().getRawParameterValue (base + "Div")->load();
+    const int k = acv2::tempo::familyPosition ((acv2::tempo::Family) family, idx);
+    const juce::ScopedValueSetter<bool> guard (settingDiv, true);
+    divSlider.setValue ((double) k, juce::dontSendNotification);
+    divSlider.updateText();
+}
+
+void SyncKnob::parameterChanged (const juce::String& id, float v)
+{
+    juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<SyncKnob> (this), id, v]
     {
-        juce::SettableTooltipClient::setTooltip (tip);
-        msSlider.setTooltip (tip);
-        divSlider.setTooltip (tip);
-    }
+        if (sp == nullptr) return;
+        if (id.endsWith ("Sync")) sp->showBeats (v > 0.5f);
+        else                      sp->followDiv();
+    });
+}
 
-    void resized() override
-    {
-        auto r = getLocalBounds();
-        auto chipRow = r.removeFromBottom (kChipH);
-        chip.setBounds (chipRow.withSizeKeepingCentre (juce::jmin (52, chipRow.getWidth()), kChipH - 2));
-        msSlider.setBounds (r);
-        divSlider.setBounds (r);
-    }
+void SyncKnob::showBeats (bool beats)
+{
+    msSlider.setVisible (! beats);
+    divSlider.setVisible (beats);
+    familyChip.setVisible (beats);
+    chip.setButtonText (beats ? "beat" : "ms");
+}
 
-private:
-    void parameterChanged (const juce::String&, float v) override
-    {
-        juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<SyncKnob> (this), v]
-            { if (sp != nullptr) sp->showBeats (v > 0.5f); });
-    }
-
-    void showBeats (bool beats)
-    {
-        msSlider.setVisible (! beats);
-        divSlider.setVisible (beats);
-        chip.setButtonText (beats ? "beat" : "ms");
-    }
-
-    WaveTreeProcessor* proc = nullptr;
-    juce::String base;
-    bool listening = false;
-    juce::Slider msSlider, divSlider;
-    juce::ToggleButton chip { "ms" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> msAtt, divAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chipAtt;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SyncKnob)
-};
-} // namespace
-
-// =============================================================================
-//  GuiItem wrappers + registration
-// =============================================================================
 namespace
 {
 class SyncKnobItem : public foleys::GuiItem

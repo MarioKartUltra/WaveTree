@@ -63,7 +63,31 @@ static void testTempo()
     static const char* frozen[16] = { "1/32", "1/16T", "1/16", "1/8T", "1/16.",
                                       "1/8",  "1/4T",  "1/8.", "1/4",  "1/2T",
                                       "1/4.", "1/2",   "1/2.", "1/1",  "2/1", "4/1" };
-    CHECK(kNumDivisions == 16);
+    // the first 16 are frozen; five faster ones were appended 2026-10-02
+    CHECK(kNumDivisions == 21);
+    CHECK_EQ_STR(label(16), "1/128");  CHECK_EQ_STR(label(17), "1/64T");  CHECK_EQ_STR(label(18), "1/64");
+    CHECK_EQ_STR(label(19), "1/32T");  CHECK_EQ_STR(label(20), "1/32.");
+    CHECK_NEAR(divisionToMs(16, 120.0), 15.625, 1e-9);
+    CHECK_NEAR(divisionToMs(18, 120.0), 31.25, 1e-9);
+    CHECK_NEAR(divisionToMs(19, 120.0), 2000.0 / 48.0, 1e-9);
+    // a knob steps through one family in duration order
+    {
+        int order[64];
+        const int n = familyOrder(Family::Straight, order, 64);
+        CHECK(n == 10 && order[0] == 16 && order[1] == 18 && order[2] == 0 && order[3] == 2 && order[9] == 15);
+        bool sorted = true;
+        for (int k = 1; k < n; ++k) sorted = sorted && wholeNotes(order[k]) > wholeNotes(order[k - 1]);
+        CHECK(sorted);
+        const int t = familyOrder(Family::Triplet, order, 64);
+        CHECK(t == 6 && order[0] == 17 && order[1] == 19 && order[2] == 1);
+        const int d = familyOrder(Family::Dotted, order, 64);
+        CHECK(d == 5 && order[0] == 20 && order[1] == 4);
+        const int a = familyOrder(Family::All, order, 64);
+        CHECK(a == 21 && order[0] == 16 && order[20] == 15);
+        CHECK(familyPosition(Family::Straight, 8) == 5);              // 1/4 is the sixth straight value
+        CHECK(familyPosition(Family::Straight, 6) == 5 || familyPosition(Family::Straight, 6) == 4);   // 1/4T snaps to a neighbour
+        CHECK(std::string(familyName(Family::Triplet)) == "T");
+    }
     for (int i = 0; i < 16; ++i)
         CHECK_EQ_STR(label(i), frozen[i]);
 
@@ -132,7 +156,8 @@ static void testTempo()
     // Label round-trip + rejection.
     for (int i = 0; i < 16; ++i)
         CHECK(indexOfLabel(label(i)) == i);
-    CHECK(indexOfLabel("1/128") == -1);
+    CHECK(indexOfLabel("1/128") == 16);
+    CHECK(indexOfLabel("1/3") == -1);
 }
 
 // ───────────────────────────── lfo ───────────────────────────────────────────

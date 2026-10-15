@@ -123,15 +123,46 @@ public:
     }
 
     // ── unit readout under each knob (slider textbox) ──────────────────────
+    // A real text box: one click opens it for typing (JUCE's default for a
+    // slider's value box), and it says so. A hairline under the number marks
+    // it as a field; cmd/ctrl while dragging the knob gives fine control (JUCE).
+    struct ValueBox final : juce::Label
+    {
+        ValueBox() : juce::Label ({}, {}) {}
+        void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}
+        juce::String getTooltip() override
+        {
+            const auto own = juce::Label::getTooltip();
+            const juce::String hint = "Click the value to type it. Hold cmd (ctrl) while dragging the knob for fine control.";
+            return own.isEmpty() ? hint : own + "\n" + hint;
+        }
+        void paint (juce::Graphics& g) override
+        {
+            juce::Label::paint (g);
+            if (isBeingEdited()) return;
+            const auto b = getLocalBounds().toFloat();
+            const float w = juce::jmin (b.getWidth() - 8.0f, juce::GlyphArrangement::getStringWidth (getFont(), getText()) + 6.0f);
+            g.setColour (findColour (juce::Label::outlineColourId));
+            g.fillRect (b.getCentreX() - 0.5f * w, b.getBottom() - 1.5f, w, 1.0f);
+        }
+        std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override
+        { return createIgnoredAccessibilityHandler (*this); }
+    };
+
     juce::Label* createSliderTextBox (juce::Slider& s) override
     {
-        auto* l = juce::LookAndFeel_V4::createSliderTextBox (s);
-        l->setFont (valueFont());
+        auto* l = new ValueBox();
         l->setJustificationType (juce::Justification::centred);
+        l->setKeyboardType (juce::TextInputTarget::decimalKeyboard);
+        l->setFont (valueFont());
         l->setColour (juce::Label::textColourId, toColour (pal.textPrimary));
-        l->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
-        l->setColour (juce::Label::outlineWhenEditingColourId,
-                      toColour (pal.accentDim));
+        l->setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+        l->setColour (juce::Label::outlineColourId, toColour (pal.outline).withAlpha (0.7f));   // the hairline
+        l->setColour (juce::Label::outlineWhenEditingColourId, toColour (pal.accentDim));
+        l->setColour (juce::TextEditor::textColourId, toColour (pal.textPrimary));
+        l->setColour (juce::TextEditor::backgroundColourId, toColour (pal.hero));
+        l->setColour (juce::TextEditor::highlightColourId, toColour (pal.accentDim));
+        juce::ignoreUnused (s);
         return l;
     }
 

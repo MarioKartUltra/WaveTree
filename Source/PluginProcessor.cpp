@@ -95,7 +95,8 @@ APVTS::ParameterLayout WaveTreeProcessor::createLayout()
         c (base + "Div",  nm + " Beat", tempo::labels<juce::StringArray>(), divDef);
     };
 
-    c (pid::wavelet,  "Wavelet", { "Haar", "Db2", "Db4", "Db6" }, 2);
+    c (pid::wavelet,  "Wavelet", { "Haar", "Db2", "Db4", "Db6", "Db10", "Sym4", "Sym8", "Coif2", "Coif4",
+                                   "Bior2.2", "Bior4.4", "Bior6.8" }, 2);
     c (pid::mode,     "Mode", { "Bands", "Cascade", "Atoms" }, 1);
     p.push_back (std::make_unique<juce::AudioParameterInt> (juce::ParameterID { pid::seed, 2 }, "Seed", 0, 9999, 1));
     c (pid::seedMode, "Seed Policy", { "Fixed", "Per-Key", "Random" }, 1);
@@ -119,6 +120,8 @@ APVTS::ParameterLayout WaveTreeProcessor::createLayout()
     u (pid::reso,     "Resonance", 0.15f);
     f (pid::output,   "Output", { 0.0f, 2.0f, 0.001f }, 0.7f, strDb, valDb);
     p.push_back (std::make_unique<juce::AudioParameterInt> (juce::ParameterID { pid::voices, 2 }, "Polyphony", 1, 16, 8));
+    syncGroup ("glide", "Glide", { 0.0f, 2000.0f, 0.0f, 0.4f }, 0.0f, 8);
+    b (pid::legato, "Legato", false);
 
     for (auto* prefix : { "lfoA", "lfoB" })
     {
@@ -186,6 +189,8 @@ void WaveTreeProcessor::cacheRawPointers()
     raw.releaseSync = g (pid::releaseSync); raw.releaseMs = g (pid::releaseMs); raw.releaseDiv = g (pid::releaseDiv);
     raw.cutoffHz = g (pid::cutoffHz); raw.reso = g (pid::reso);
     raw.output = g (pid::output);     raw.voices = g (pid::voices);
+    raw.glideSync = g (pid::glideSync); raw.glideMs = g (pid::glideMs); raw.glideDiv = g (pid::glideDiv);
+    raw.legato = g (pid::legato);
 
     const char* pres[2] = { "lfoA", "lfoB" };
     for (int i = 0; i < 2; ++i)
@@ -257,6 +262,8 @@ WaveTreeParams WaveTreeProcessor::paramsFromState (float a, float bv, double bpm
     m.reso     = raw.reso->load();
     m.output   = modded (raw.output, 4, 0.0, 2.0);
     m.numVoices = (int) raw.voices->load();
+    m.glideSeconds = resolveMs (raw.glideSync, raw.glideMs, raw.glideDiv, bpm) * 0.001;
+    m.legato = raw.legato->load() > 0.5f;
     return m;
 }
 
@@ -399,8 +406,8 @@ void WaveTreeProcessor::saveTreeToState()
             s << "B," << b << "," << juce::String (t.getBandGain (b), 3) << ";";
     for (int i = 0; i < wavetree::TreeEdit::kMaxNodes; ++i)
     {
-        if (t.getNodeLevel (i) >= 0.0f)                       // L = a painted level
-            s << "L," << i << "," << juce::String (t.getNodeLevel (i), 3) << ";";
+        if (t.getNodeLevel (i) >= 0.0f)                       // L = a painted level, and the slope it was painted at
+            s << "L," << i << "," << juce::String (t.getNodeLevel (i), 3) << "," << juce::String (t.getNodeSlope (i), 3) << ";";
         else if (std::abs (t.getNodeGain (i) - 1.0f) > 0.001f)   // N = a gain, from older projects
             s << "N," << i << "," << juce::String (t.getNodeGain (i), 3) << ";";
     }
@@ -412,15 +419,18 @@ void WaveTreeProcessor::loadTreeFromState()
     auto& t = synth.treeEdit();
     t.reset();
     const auto s = magicState.getPropertyRoot().getProperty ("treeGains", juce::String()).toString();
+    // a level saved before paint slopes existed was drawn on the flat scale: it
+    // takes the slope the project opens with, so it sounds as it was saved
+    const float nowSlope = (float) wavetree::treeSlope (paramsFromState (0.0f, 0.0f, lastBpm));
     for (auto& tok : juce::StringArray::fromTokens (s, ";", {}))
     {
         auto parts = juce::StringArray::fromTokens (tok, ",", {});
-        if (parts.size() != 3) continue;
+        if (parts.size() != 3 && ! (parts.size() == 4 && parts[0] == "L")) continue;
         const int idx = parts[1].getIntValue();
         const float g = parts[2].getFloatValue();
         if (parts[0] == "B") t.setBandGain (idx, g);
         else if (parts[0] == "N") t.setNodeGain (idx, g);
-        else if (parts[0] == "L") t.setNodeLevel (idx, g);
+        else if (parts[0] == "L") t.setNodeLevel (idx, g, parts.size() == 4 ? parts[3].getFloatValue() : nowSlope);
     }
     t.bump();
 }

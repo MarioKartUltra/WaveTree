@@ -55,5 +55,9 @@ struct WaveTreeParams
     double reso     = 0.2;
     double output   = 0.7;
     int    numVoices = 8;
+
+    // ---- keyboard ----
+    double glideSeconds = 0.0;   // pitch slide from the previous note (0 = off), constant time per slide
+    bool   legato       = false; // a key that takes over a sounding voice keeps its envelope and table
 };
 } // namespace wavetree

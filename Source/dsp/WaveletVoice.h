@@ -49,6 +49,8 @@ public:
     static constexpr int kLevels = 10;
     static constexpr int kMips   = 8;    // mip m zeroes the m finest detail bands
 
+    static double hzOf (int midiNote) { return 440.0 * std::pow (2.0, (midiNote - 69) / 12.0); }
+
     void prepare (double sampleRate, const TreeEdit* sharedTree)
     {
         sr = sampleRate;
@@ -60,15 +62,16 @@ public:
         idwtBuf.assign (kFrame, 0.0);
         dispMags.assign (kFrame, 0.0f);
         scratch.prepare (kFrame);
-        for (int i = 0; i < 4; ++i) wavelets[i] = makeWavelet ((WaveletType) i);
-        dwt.configure (wavelets[3], kFrame, kLevels);   // Db6 first: warms max capacity
+        for (int i = 0; i < kNumWavelets; ++i) wavelets[i] = makeWavelet ((WaveletType) i);
+        dwt.configure (wavelets[(int) WaveletType::Coif4], kFrame, kLevels);   // the longest filter first: warms max capacity
         dwt.configure (wavelets[(int) curWavelet], kFrame, kLevels);
         reset();
     }
 
     void setPitchBend (double semis) { bend = std::pow (2.0, semis / 12.0); if (active) setFreq (f0Hz); }
 
-    void noteOn (int midiNote, double vel, const WaveTreeParams& params, std::uint64_t seed)
+    // fromHz > 0 with glide on: start there and slide to the key over glideSeconds.
+    void noteOn (int midiNote, double vel, const WaveTreeParams& params, std::uint64_t seed, double fromHz = 0.0)
     {
         p_ = params;
         note = midiNote; velocity = vel;
@@ -78,10 +81,22 @@ public:
         morphXf = 1.0; morphing = false; regenPending = false; pendingXfSec = 0.03;
         setMorphTimer();
 
-        f0Hz = 440.0 * std::pow (2.0, (midiNote - 69) / 12.0);
-        phase = 0.0; setFreq (f0Hz);
+        noteHz = hzOf (midiNote);
+        phase = 0.0; startGlide (fromHz);
         env = 0.0; stage = Attack; released = false; active = true;
         svf.reset();
+    }
+
+    // A key takes over this sounding voice (legato): new pitch, glided when glide
+    // is on; envelope and table untouched. A different seed arrives as a crossfade.
+    void legatoTo (int midiNote, const WaveTreeParams& params, std::uint64_t seed)
+    {
+        if (! active) return;
+        p_ = params;
+        note = midiNote;
+        noteHz = hzOf (midiNote);
+        startGlide (f0Hz);
+        if (seed != seed64) { seed64 = seed; requestRegen (0.03); }
     }
 
     void noteOff() { released = true; stage = Release; }
@@ -147,6 +162,7 @@ public:
         }
 
         phase += phaseInc; if (phase >= 1.0) phase -= 1.0;
+        advanceGlide();
 
         // ---- amp envelope ----
         advanceEnv();
@@ -166,14 +182,21 @@ public:
     bool isReleased() const { return released; }
     bool hasPendingRegen() const { return active && regenPending && ! morphing; }
     int  midiNote()   const { return note; }
+    double currentHz() const { return f0Hz; }       // the pitch now (mid-glide it is between keys)
+    double envelope()  const { return env; }
+    bool isGliding()   const { return glideLeft > 0; }
     std::uint64_t currentSeed() const { return seed64; }
-    void reset() { phase = 0; env = 0; stage = Idle; active = false; released = false;
+    void reset() { phase = 0; env = 0; stage = Idle; active = false; released = false; glideLeft = 0;
                    morphing = false; regenPending = false; svf.reset(); dcX1 = dcY1 = 0; }
     void panic() { reset(); }
 
     // UI feeds (message-thread reads; torn reads are display-only)
     const float*  wavetable() const  { return table.data(); }           // mip 0
     const float*  coeffMags() const  { return dispMags.data(); }        // pre-gain |coeffs|
+    double generatedHurst() const         { return genHurst; }            // the parameters the tree was built with
+    double generatedIntermittency() const { return genIntermittency; }
+    Mode   generatedMode() const          { return genMode; }
+    double generatedSlope() const         { return genSlope; }            // treeSlope: Hurst slope + tilt offset
     std::uint32_t buildStamp() const { return stamp; }
     const Dwt&    layout() const     { return dwt; }
 
@@ -182,6 +205,7 @@ private:
 
     void configureDwt (WaveletType wt)
     {
+        if ((int) wt < 0 || (int) wt >= kNumWavelets) wt = WaveletType::Db4;   // a future project's index
         if (wt != curWavelet || dwt.frameSize() != kFrame)
         { dwt.configure (wavelets[(int) wt], kFrame, kLevels); curWavelet = wt; }
     }
@@ -191,8 +215,9 @@ private:
         Rng rng (seed);
         generateCoeffs (coeffBuf.data(), dwt, p_, rng, scratch);
 
-        // publish pre-gain magnitudes for the tree display
+        // publish pre-gain magnitudes for the tree display, and what made them
         for (int i = 0; i < kFrame; ++i) dispMags[(size_t) i] = (float) std::fabs (coeffBuf[(size_t) i]);
+        genHurst = p_.hurst; genIntermittency = p_.intermittency; genMode = p_.mode; genSlope = treeSlope (p_);
         ++stamp;
 
         // TreeEdit overlay: band gains, painted levels and node gains (lock-free reads)
@@ -200,7 +225,8 @@ private:
         if (tree != nullptr && ! tree->isIdentity())
             applyTreeEdit (*tree, coeffBuf.data(), gainBuf.data(), nb,
                            [this] (int b) { return dwt.bandOff (b); },
-                           [this] (int b) { return dwt.bandSize (b); });
+                           [this] (int b) { return dwt.bandSize (b); },
+                           treeSlope (p_));
         else
             std::copy (coeffBuf.begin(), coeffBuf.end(), gainBuf.begin());
 
@@ -222,6 +248,29 @@ private:
             const int off = dwt.bandOff (bz), n = dwt.bandSize (bz);
             for (int k = 0; k < n; ++k) gainBuf[(size_t) (off + k)] = 0.0;
         }
+    }
+
+    // constant-time glide: the same seconds for any interval, exponential in Hz
+    // (a straight line in pitch), the mip level re-picked every 64 samples
+    void startGlide (double fromHz)
+    {
+        const int n = (int) (std::max (0.0, p_.glideSeconds) * sr);
+        if (fromHz > 0.0 && n > 0 && std::fabs (fromHz - noteHz) > 1.0e-9)
+        {
+            f0Hz = fromHz; glideLeft = n; glideTick = 0;
+            glideRatio = std::pow (noteHz / fromHz, 1.0 / n);
+        }
+        else { f0Hz = noteHz; glideLeft = 0; }
+        setFreq (f0Hz);
+    }
+
+    inline void advanceGlide()
+    {
+        if (glideLeft <= 0) return;
+        f0Hz *= glideRatio;
+        if (--glideLeft == 0) { f0Hz = noteHz; setFreq (f0Hz); return; }
+        phaseInc = f0Hz * bend / sr;
+        if (++glideTick >= 64) { glideTick = 0; setFreq (f0Hz); }
     }
 
     void setFreq (double f0)
@@ -256,7 +305,7 @@ private:
 
     double sr = 48000.0;
     Dwt dwt;
-    Wavelet wavelets[4];
+    Wavelet wavelets[kNumWavelets];
     WaveletType curWavelet = WaveletType::Db4;
     const TreeEdit* tree = nullptr;
 
@@ -265,10 +314,13 @@ private:
     std::vector<float>  dispMags;
     CoeffScratch scratch;
     std::uint32_t stamp = 0;
+    double genHurst = 0.6, genIntermittency = 0.4, genSlope = 1.31;
+    Mode   genMode = Mode::Cascade;
 
     WaveTreeParams p_;
-    int    note = 60; double velocity = 1.0, bend = 1.0, f0Hz = 261.63;
+    int    note = 60; double velocity = 1.0, bend = 1.0, f0Hz = 261.63, noteHz = 261.63;
     double phase = 0.0, phaseInc = 0.0;
+    int    glideLeft = 0, glideTick = 0; double glideRatio = 1.0;
     int    mip = 0;
     double env = 0.0; Stage stage = Idle;
     bool   active = false, released = false;

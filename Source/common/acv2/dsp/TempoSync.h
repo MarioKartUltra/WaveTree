@@ -55,10 +55,18 @@ inline constexpr Division kDivisions[] = {
     { "1/1",   1,  1, Modifier::Straight },
     { "2/1",   2,  1, Modifier::Straight },
     { "4/1",   4,  1, Modifier::Straight },
+    // appended 2026-10-02 (faster divisions; the first 16 stay where they are so
+    // saved indices keep their meaning — a knob steps through them in DURATION
+    // order via familyOrder(), never through this table order)
+    { "1/128", 1, 128, Modifier::Straight },
+    { "1/64T", 1,  64, Modifier::Triplet  },
+    { "1/64",  1,  64, Modifier::Straight },
+    { "1/32T", 1,  32, Modifier::Triplet  },
+    { "1/32.", 1,  32, Modifier::Dotted   },
 };
 
 inline constexpr int kNumDivisions = int (sizeof (kDivisions) / sizeof (kDivisions[0]));
-static_assert (kNumDivisions == 16, "the division list is frozen at 16 entries");
+static_assert (kNumDivisions == 21, "the first 16 divisions are frozen; new ones are only ever appended");
 
 inline constexpr int kDefaultDivision = 8; // "1/4"
 
@@ -94,6 +102,53 @@ inline double quarterNoteMs (double bpm) noexcept
 inline double divisionToMs (int index, double bpm, int /*sigNum*/ = 4, int /*sigDen*/ = 4) noexcept
 {
     return quarterNotes (index) * quarterNoteMs (bpm);
+}
+
+// ── families, for knobs ───────────────────────────────────────────────────
+// The table interleaves straight, triplet and dotted values when read in order,
+// so a knob stepping through indices goes 1/8 -> 1/4T -> 1/8. -> 1/4. A knob
+// should step through ONE family in duration order instead (or all of them,
+// still in duration order). familyOrder() fills `out` with the indices to step
+// through and returns how many. family: 0 = all, 1 = straight, 2 = triplet,
+// 3 = dotted.
+enum class Family { All = 0, Straight = 1, Triplet = 2, Dotted = 3 };
+
+inline bool inFamily (int index, Family f) noexcept
+{
+    const auto m = kDivisions[clampIndex (index)].mod;
+    return f == Family::All || (f == Family::Straight && m == Modifier::Straight)
+        || (f == Family::Triplet && m == Modifier::Triplet) || (f == Family::Dotted && m == Modifier::Dotted);
+}
+
+inline int familyOrder (Family f, int* out, int capacity) noexcept
+{
+    int n = 0;
+    for (int i = 0; i < kNumDivisions && n < capacity; ++i)
+        if (inFamily (i, f)) out[n++] = i;
+    // insertion sort by duration (the list is short)
+    for (int a = 1; a < n; ++a)
+        for (int b = a; b > 0 && wholeNotes (out[b]) < wholeNotes (out[b - 1]); --b)
+        { const int t = out[b]; out[b] = out[b - 1]; out[b - 1] = t; }
+    return n;
+}
+
+// Where `index` sits in its family's order (the nearest member when it is not in the family).
+inline int familyPosition (Family f, int index) noexcept
+{
+    int order[64];
+    const int n = familyOrder (f, order, 64);
+    int best = 0; double bestDiff = 1.0e300;
+    for (int k = 0; k < n; ++k)
+    {
+        const double diff = std::fabs (std::log (wholeNotes (order[k])) - std::log (wholeNotes (index)));
+        if (diff < bestDiff) { bestDiff = diff; best = k; }
+    }
+    return best;
+}
+
+inline const char* familyName (Family f) noexcept
+{
+    switch (f) { case Family::Straight: return "1/n"; case Family::Triplet: return "T"; case Family::Dotted: return "."; default: return "all"; }
 }
 
 inline double msToHz (double ms) noexcept { return ms > 0.0 ? 1000.0 / ms : 0.0; }

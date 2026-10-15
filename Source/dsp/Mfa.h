@@ -30,12 +30,35 @@ struct MfaResult
     bool   valid = false;
 };
 
+// The Cascade generator's ensemble spectrum in closed form (CoeffGen.h makes
+// |d_j| = 2^{-j s} e^{lambda_j} with lambda a Gaussian walk of variance j sigma^2):
+//   zeta(q) = q s - q^2 sigma^2 / (2 ln 2),  D(h) = 1 - (h - s)^2 ln 2 / (2 sigma^2)
+// a parabola centred on s, collapsing to the point h = s when sigma = 0.
+inline double cascadeSlope (double hurst)        { return 0.35 + hurst * 1.6; }
+inline double cascadeSigma (double intermittency) { return intermittency * 0.9; }
+// centred on the slope the tree was generated with (Hurst slope plus the Tilt offset)
+inline double analyticDhAt (double slope, double intermittency, double h)
+{
+    const double s = slope, sigma = cascadeSigma (intermittency);
+    if (sigma < 1.0e-6) return std::fabs (h - s) < 1.0e-9 ? 1.0 : -1.0e300;
+    const double d = h - s;
+    return 1.0 - d * d * std::log (2.0) / (2.0 * sigma * sigma);
+}
+inline double analyticDh (double hurst, double intermittency, double h)   // at tilt 50 %
+{ return analyticDhAt (cascadeSlope (hurst), intermittency, h); }
+
 // bandOff/bandSize describe the packed coefficient layout (see Dwt.h): band 0 is
 // the approximation, bands 1..numBands-1 are details, coarse -> fine.
+// Several coefficient sets (a chord: one tree per voice) are quantified
+// together by ADDING their moments per band, S(q, j) = mean over every
+// coefficient of every set at depth j: the spectrum of the chord's total
+// coefficient measure. For voices with equal parameters it is the single-voice
+// spectrum; for different ones, asymptotically the concave hull of the union.
 template <typename OffFn, typename SizeFn>
-inline MfaResult computeDh (const float* coeffs, int numBands, OffFn bandOff, SizeFn bandSize)
+inline MfaResult computeDhMulti (const float* const* sets, int numSets, int numBands, OffFn bandOff, SizeFn bandSize)
 {
     MfaResult r;
+    if (sets == nullptr || numSets < 1) return r;
 
     // q grid, avoiding q = 0 (h and D are recovered around it by the transform).
     static constexpr double qs[] = { -2.0, -1.5, -1.0, -0.5, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0 };
@@ -60,12 +83,13 @@ inline MfaResult computeDh (const float* coeffs, int numBands, OffFn bandOff, Si
         {
             const int off = bandOff (b), n = bandSize (b);
             double s = 0.0;
-            for (int k = 0; k < n; ++k)
-            {
-                const double a = std::fabs ((double) coeffs[off + k]) + 1.0e-12;
-                s += std::pow (a, qs[qi]);
-            }
-            const double y = std::log2 (s / (double) n);
+            for (int v = 0; v < numSets; ++v)
+                for (int k = 0; k < n; ++k)
+                {
+                    const double a = std::fabs ((double) sets[v][off + k]) + 1.0e-12;
+                    s += std::pow (a, qs[qi]);
+                }
+            const double y = std::log2 (s / (double) (n * numSets));
             const double x = (double) (b - 1);
             sx += x; sy += y; sxx += x * x; sxy += x * y;
         }
@@ -95,5 +119,12 @@ inline MfaResult computeDh (const float* coeffs, int numBands, OffFn bandOff, Si
     }
     r.valid = std::isfinite (r.hMin) && std::isfinite (r.hMax);
     return r;
+}
+
+template <typename OffFn, typename SizeFn>
+inline MfaResult computeDh (const float* coeffs, int numBands, OffFn bandOff, SizeFn bandSize)
+{
+    const float* one[1] = { coeffs };
+    return computeDhMulti (one, 1, numBands, bandOff, bandSize);
 }
 } // namespace wavetree

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <vector>
 #include "Dwt.h"
+#include "Mfa.h"
 #include "Params.h"
 #include "Rng.h"
 
@@ -33,6 +34,18 @@ struct CoeffScratch
         cur.assign ((size_t) frameSize, 0.0);
     }
 };
+
+// Tilt is a spectral slope in every mode: Bands has always used tilt x 2.2 as
+// its slope; Cascade and Atoms add (tilt - 0.5) x 2.2 to their own, so 50 % is
+// exactly what they did before tilt reached them. treeSlope() is the slope the
+// painted levels of the TreeEdit overlay follow (TreeEdit.h bandReference).
+inline double tiltOffset (const WaveTreeParams& p) { return (p.tilt - 0.5) * 2.2; }
+inline double treeSlope (const WaveTreeParams& p)
+{
+    if (p.mode == Mode::Bands)   return p.tilt * 2.2;
+    if (p.mode == Mode::Cascade) return cascadeSlope (p.hurst) + tiltOffset (p);
+    return 0.7 + tiltOffset (p);
+}
 
 inline void generateCoeffs (double* coeffs, Dwt& dwt, const WaveTreeParams& p,
                             Rng& rng, CoeffScratch& scratch)
@@ -59,8 +72,8 @@ inline void generateCoeffs (double* coeffs, Dwt& dwt, const WaveTreeParams& p,
     }
     else if (p.mode == Mode::Cascade)
     {
-        const double slope = 0.35 + p.hurst * 1.6;              // fBm spectral slope (H)
-        const double sigma = p.intermittency * 0.9;             // log-normal cascade width
+        const double slope = cascadeSlope (p.hurst) + tiltOffset (p);   // the Hurst slope (Mfa.h), tilted
+        const double sigma = cascadeSigma (p.intermittency);    // log-normal cascade width
         double* prev = scratch.prev.data();
         double* cur  = scratch.cur.data();
         for (int b = 1; b < nb; ++b)
@@ -82,7 +95,7 @@ inline void generateCoeffs (double* coeffs, Dwt& dwt, const WaveTreeParams& p,
         for (int b = 1; b < nb; ++b)
         {
             const int off = dwt.bandOff (b), sz = dwt.bandSize (b);
-            const double A = std::pow (2.0, -(double) (b - 1) * 0.7);
+            const double A = std::pow (2.0, -(double) (b - 1) * (0.7 + tiltOffset (p)));
             const int nnz = std::max (1, (int) (p.density * sz));
             for (int j = 0; j < nnz; ++j)
             {
