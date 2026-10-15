@@ -50,7 +50,7 @@
         <Sigil border="0" margin="0" padding="0" background-color="00000000"/>
         <PresetBar border="0" margin="0" padding="0" background-color="00000000" lookAndFeel="LnfV2"/>
         <SeedPanel border="0" margin="0" padding="0" background-color="00000000" lookAndFeel="LnfV2"/>
-        <KeyboardComponent border="0" margin="2" padding="0" background-color="00000000"/>
+        <Keyboard border="0" margin="2" padding="0" background-color="00000000"/>
       </Types>
       <Palettes>
         <default/>
@@ -201,7 +201,7 @@
     </View>
 
     <!-- ── on-screen keyboard ──────────────────────────────────────────── -->
-    <KeyboardComponent max-height="58" key-down-color="FFA275F5" mouse-over-color="66A275F5"
+    <Keyboard max-height="58" key-down-color="FFA275F5" mouse-over-color="66A275F5"
                        tooltip="On-screen MIDI keyboard."/>
   </View>
 </magic>

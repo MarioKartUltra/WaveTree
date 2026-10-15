@@ -6,6 +6,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "BinaryData.h"
+#include "common/acv2/ui/KeyboardItem.h"
 
 using APVTS = juce::AudioProcessorValueTreeState;
 using namespace wavetree;
@@ -346,6 +347,7 @@ void WaveTreeProcessor::initialiseBuilder (foleys::MagicGUIBuilder& builder)
     builder.registerJUCEFactories();
     builder.registerJUCELookAndFeels();
     builder.registerLookAndFeel ("LnfV2", std::make_unique<acv2::ui::LnfV2> (acv2::theme::kWaveTree));
+    builder.registerFactory ("Keyboard", &acv2::KeyboardItem::factory);   // focus-aware on-screen keyboard
     registerWaveTreeGuiItems (builder);          // PluginEditor.h factories
 }
 
